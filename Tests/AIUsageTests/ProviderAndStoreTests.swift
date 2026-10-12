@@ -77,6 +77,24 @@ private actor FetchCounter {
     func increment() { value += 1 }
 }
 
+private actor AutoStartCommandRecorder: UsageWindowStartCommandRunning {
+    private var started: [Provider] = []
+    func run(provider: Provider) async { started.append(provider) }
+    func providers() -> [Provider] { started }
+}
+
+private struct AutoStartFixtureProvider: UsageProvider {
+    let provider: Provider
+    func fetch() async throws -> UsageSnapshot {
+        UsageSnapshot(
+            provider: provider,
+            windows: [UsageWindow(label: "5-hour limit", utilization: 20, resetsAt: .now.addingTimeInterval(-300))],
+            account: nil,
+            lastSuccess: .now
+        )
+    }
+}
+
 private struct FixtureProvider: UsageProvider {
     let provider: Provider
     let failure: ProviderFailure?
@@ -97,6 +115,64 @@ private struct FixtureProvider: UsageProvider {
 }
 
 final class ProviderAndStoreTests: XCTestCase {
+    func testAutoStartPolicyOnlyStartsForFreshlyResetSupportedWindows() {
+        let now = Date.now
+        func snapshot(_ provider: Provider, label: String, utilization: Double, reset: Date?) -> UsageSnapshot {
+            UsageSnapshot(provider: provider, windows: [UsageWindow(label: label, utilization: utilization, resetsAt: reset)], account: nil, lastSuccess: now)
+        }
+        XCTAssertTrue(UsageWindowAutoStartPolicy.shouldStart(
+            snapshot: snapshot(.claude, label: "5-hour limit", utilization: 100, reset: now.addingTimeInterval(-180)),
+            now: now,
+            lastStartedAt: nil
+        ))
+        XCTAssertTrue(UsageWindowAutoStartPolicy.shouldStart(
+            snapshot: snapshot(.codex, label: "5-hour limit", utilization: 0, reset: now.addingTimeInterval(-180)),
+            now: now,
+            lastStartedAt: nil
+        ))
+        XCTAssertTrue(UsageWindowAutoStartPolicy.shouldStart(
+            snapshot: snapshot(.antigravity, label: "Gemini 5-hour", utilization: 0, reset: now.addingTimeInterval(3600)),
+            now: now,
+            lastStartedAt: nil
+        ))
+        XCTAssertFalse(UsageWindowAutoStartPolicy.shouldStart(
+            snapshot: snapshot(.claude, label: "5-hour limit", utilization: 20, reset: now.addingTimeInterval(3600)),
+            now: now,
+            lastStartedAt: nil
+        ))
+        XCTAssertFalse(UsageWindowAutoStartPolicy.shouldStart(
+            snapshot: snapshot(.grok, label: "Weekly credits", utilization: 100, reset: now.addingTimeInterval(-3600)),
+            now: now,
+            lastStartedAt: nil
+        ))
+    }
+
+    @MainActor
+    func testAutoStartSettingPersistsAndDispatchesOneCommandPerCooldown() async {
+        let defaults = isolatedDefaults()
+        let recorder = AutoStartCommandRecorder()
+        let store = UsageStore(
+            providers: [AutoStartFixtureProvider(provider: .claude)],
+            defaults: defaults,
+            startImmediately: false,
+            autoStartRunner: recorder
+        )
+        XCTAssertFalse(store.autoStartUsageWindow)
+        store.autoStartUsageWindow = true
+        await store.refresh()
+        for _ in 0..<10 {
+            if !(await recorder.providers()).isEmpty { break }
+            await Task.yield()
+        }
+        let firstStarts = await recorder.providers()
+        XCTAssertEqual(firstStarts, [.claude])
+        await store.refresh()
+        for _ in 0..<10 { await Task.yield() }
+        let starts = await recorder.providers()
+        XCTAssertEqual(starts, [.claude])
+        XCTAssertTrue(UsageStore(providers: [], defaults: defaults, startImmediately: false).autoStartUsageWindow)
+    }
+
     func testAntigravityParsingMapsGroupsAndResetDates() throws {
         let payload = Data(#"{"response":{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"session","remainingFraction":0.75,"resetTime":"2026-10-13T12:30:00Z"},{"bucketId":"weekly","remaining":{"case":"remainingFraction","value":0.4}}]},{"displayName":"Claude and GPT models","buckets":[{"bucketId":"session","remainingFraction":0.9,"disabled":false}]}]}}"#.utf8)
         let windows = try AntigravityParsing.windows(payload)

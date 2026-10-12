@@ -27,6 +27,7 @@ import ServiceManagement
         didSet { defaults.set(menuBarMode.rawValue, forKey: "menuBarMode") }
     }
     var appearance = "system" { didSet { defaults.set(appearance, forKey: "appearance") } }
+    var autoStartUsageWindow = false { didSet { defaults.set(autoStartUsageWindow, forKey: "autoStartUsageWindow") } }
     var launchAtLoginEnabled = false
     var launchAtLoginError: String?
     private(set) var lastRefreshAttempt: Date?
@@ -48,6 +49,7 @@ import ServiceManagement
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private let codexAuthFileURL: URL
     @ObservationIgnored private let fileModificationDate: @Sendable (String) -> Date?
+    @ObservationIgnored private let autoStartRunner: any UsageWindowStartCommandRunning
     @ObservationIgnored private var codexAuthWatcher: Task<Void, Never>?
     @ObservationIgnored private var lastSeenCodexAuthMtime: Date?
 
@@ -77,7 +79,8 @@ import ServiceManagement
         cacheURL: URL? = nil,
         startImmediately: Bool = true,
         codexAuthFileURL: URL? = nil,
-        fileModificationDate: (@Sendable (String) -> Date?)? = nil
+        fileModificationDate: (@Sendable (String) -> Date?)? = nil,
+        autoStartRunner: any UsageWindowStartCommandRunning = LocalUsageWindowStartCommandRunner()
     ) {
         self.providers = providers
         self.defaults = defaults
@@ -85,6 +88,7 @@ import ServiceManagement
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
         self.codexAuthFileURL = codexAuthFileURL ?? Self.defaultCodexAuthFileURL()
         self.fileModificationDate = fileModificationDate ?? Self.defaultModificationDate
+        self.autoStartRunner = autoStartRunner
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
         }
@@ -104,6 +108,7 @@ import ServiceManagement
             menuBarMode = MenuBarDisplayMode(legacyValue: defaults.string(forKey: "menuBarStyle") ?? "Highest usage")
         }
         appearance = (defaults.string(forKey: "appearance") ?? "system").lowercased()
+        autoStartUsageWindow = defaults.bool(forKey: "autoStartUsageWindow")
         if let data = defaults.data(forKey: "codexHomes"),
            let homes = try? JSONDecoder().decode([CodexHome].self, from: data) {
             codexHomes = homes
@@ -141,6 +146,7 @@ import ServiceManagement
                     snapshot.error = nil
                     snapshot.status = .connected
                     snapshots[provider] = snapshot
+                    maybeStartUsageWindow(for: snapshot)
                     if provider == .codex {
                         noteSuccessfulCodexFetch(snapshot)
                     }
@@ -163,6 +169,19 @@ import ServiceManagement
             }
         }
         save()
+    }
+
+    private func maybeStartUsageWindow(for snapshot: UsageSnapshot) {
+        guard autoStartUsageWindow, visibleProviders.contains(snapshot.provider) else { return }
+        let key = "autoStartUsageWindow.lastPing.\(snapshot.provider.rawValue)"
+        let lastStartedAt = defaults.object(forKey: key) as? Date
+        let now = Date.now
+        guard UsageWindowAutoStartPolicy.shouldStart(snapshot: snapshot, now: now, lastStartedAt: lastStartedAt) else { return }
+        // Persist before dispatch so overlapping refreshes cannot send duplicate prompts.
+        defaults.set(now, forKey: key)
+        let runner = autoStartRunner
+        let provider = snapshot.provider
+        Task { await runner.run(provider: provider) }
     }
 
     func schedule() {

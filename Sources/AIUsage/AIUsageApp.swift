@@ -822,6 +822,28 @@ struct SettingsWindowView: View {
                         ? "The app fetches once at startup; later refreshes require the Refresh button."
                         : "Cached usage stays visible while providers refresh independently.")
                 }
+                SettingsCard(title: "Auto-start 5-hour session") {
+                    HStack(spacing: 10) {
+                        SettingsIconTile(systemImage: "arrow.clockwise.circle", foreground: UsageTheme.warning, background: UsageTheme.warning.opacity(0.12))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Start a new window after reset")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(UsageTheme.primaryText)
+                            Text("Sends a short request with Claude Code, Codex, or Antigravity CLI and uses a small amount of quota.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Toggle("Auto-start 5-hour session", isOn: Binding(
+                            get: { store.wrappedValue.autoStartUsageWindow },
+                            set: { store.wrappedValue.autoStartUsageWindow = $0 }
+                        ))
+                        .labelsHidden()
+                    }
+                    SettingCaption(text: "Off by default. Runs only after a provider reports its 5-hour window has reset. Providers without a reliable reset signal are skipped.")
+                        .padding(.top, 6)
+                }
                 SettingsCard(title: "Launch") {
                     HStack(spacing: 10) {
                         SettingsIconTile(systemImage: "power", foreground: UsageTheme.secondaryText, background: UsageTheme.elevated)
