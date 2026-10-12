@@ -1,0 +1,15 @@
+{
+  "name": "ai-usage-monitor-local",
+  "owner": {
+    "name": "AI Usage Monitor"
+  },
+  "description": "Local Claude Code usage pane managed by AI Usage Monitor.",
+  "plugins": [
+    {
+      "name": "usage-side-pane",
+      "source": "./plugins/ai-usage-claude-pane",
+      "description": "Show cached provider quotas, Claude Code conversations, and background jobs in a terminal pane.",
+      "category": "productivity"
+    }
+  ]
+}

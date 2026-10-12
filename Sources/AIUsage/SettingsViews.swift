@@ -290,9 +290,14 @@ struct GeneralSettingsView: View {
     var store: Bindable<UsageStore>
     @State private var claudeStatusLineState: ClaudeStatusLineManager.State = .notInstalled
     @State private var claudeStatusLineError: String?
+    @State private var claudePaneState: ClaudePaneManager.State = .notInstalled
+    @State private var claudePaneError: String?
+    @State private var claudePaneWorking = false
+    @State private var showingClaudeHandoff = false
     @AppStorage("contextWarningsEnabled") private var contextWarningsEnabled = true
     @AppStorage("contextWarningThreshold") private var contextWarningThreshold = 80.0
     @AppStorage("promptCacheWarningsEnabled") private var promptCacheWarningsEnabled = true
+    @AppStorage(ClaudeProgressHandoff.optInKey) private var claudeProgressHandoffEnabled = false
 
     var body: some View {
         SettingsPage(title: "General", subtitle: "Configure your AI usage monitor.") {
@@ -364,6 +369,60 @@ struct GeneralSettingsView: View {
                     SettingsRowDivider()
                     SettingsErrorText(text: claudeStatusLineError)
                         .padding(.vertical, 4)
+                }
+            }
+            SettingsSection(title: "Claude Code Side Pane") {
+                HStack(spacing: 10) {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 16))
+                        .foregroundStyle(UsageTheme.claude)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AI Usage side pane")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Text(claudePaneDescription)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    Button(claudePaneButtonTitle) {
+                        manageClaudePane()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(claudePaneWorking || claudePaneButtonDisabled)
+                }
+                .padding(.vertical, 7)
+                .frame(minHeight: 44)
+                if let claudePaneError {
+                    SettingsRowDivider()
+                    SettingsErrorText(text: claudePaneError)
+                        .padding(.vertical, 4)
+                }
+            }
+            SettingsSection(title: "Progress hand-off") {
+                SettingsToggleRow(
+                    icon: "arrowshape.turn.up.right",
+                    iconColor: UsageTheme.claude,
+                    title: "Enable hand-off from Claude Code",
+                    description: "Off by default. When you prepare a hand-off, the app reads the latest text request from a live session transcript and Git status/diff locally. Review the complete prompt before opening a new session.",
+                    isOn: $claudeProgressHandoffEnabled
+                )
+                if claudeProgressHandoffEnabled {
+                    SettingsRowDivider()
+                    HStack {
+                        Text("Select a live session, prepare a preview, then confirm to start a new Claude Code session.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button("Prepare hand-off…") { showingClaudeHandoff = true }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                    }
+                    .padding(.vertical, 7)
                 }
             }
             SettingsSection(title: "Context & Cache Warnings") {
@@ -473,7 +532,14 @@ struct GeneralSettingsView: View {
                 }
             }
         }
-        .onAppear(perform: refreshClaudeStatusLineState)
+        .onAppear {
+            refreshClaudeStatusLineState()
+            refreshClaudePaneState()
+        }
+        .sheet(isPresented: $showingClaudeHandoff) {
+            ClaudeProgressHandoffSheet()
+                .frame(minWidth: 560, minHeight: 460)
+        }
     }
 
     private var claudeStatusLineDescription: String {
@@ -527,6 +593,62 @@ struct GeneralSettingsView: View {
             claudeStatusLineError = error.localizedDescription
         }
         refreshClaudeStatusLineState()
+    }
+
+    private var claudePaneDescription: String {
+        switch claudePaneState {
+        case .installed:
+            "Shows cached quota, live Claude Code sessions, and background jobs. No model or quota requests. Reload plugins or start a new session after changes."
+        case .notInstalled:
+            "Install an app-managed Claude Code pane. Requires Claude Code v2.1.292 or later; quota is read from the local snapshot."
+        case .unmanagedInstallation:
+            "A pane with this plugin ID is already installed outside this app. AI Usage Monitor will leave it untouched."
+        case .unavailable(let reason):
+            reason
+        }
+    }
+
+    private var claudePaneButtonTitle: String {
+        switch claudePaneState {
+        case .installed: "Remove"
+        case .notInstalled: "Install"
+        case .unmanagedInstallation: "Installed"
+        case .unavailable: "Retry"
+        }
+    }
+
+    private var claudePaneButtonDisabled: Bool {
+        if case .unmanagedInstallation = claudePaneState { return true }
+        return false
+    }
+
+    private func refreshClaudePaneState() {
+        Task.detached(priority: .utility) {
+            let state = ClaudePaneManager.state()
+            await MainActor.run { claudePaneState = state }
+        }
+    }
+
+    private func manageClaudePane() {
+        let shouldRemove: Bool
+        if case .installed = claudePaneState { shouldRemove = true } else { shouldRemove = false }
+        claudePaneWorking = true
+        claudePaneError = nil
+        Task.detached(priority: .utility) {
+            var operationError: String?
+            do {
+                if shouldRemove { try ClaudePaneManager.uninstall() }
+                else { try ClaudePaneManager.installOrUpdate() }
+            } catch {
+                operationError = error.localizedDescription
+            }
+            let newState = ClaudePaneManager.state()
+            await MainActor.run {
+                claudePaneError = operationError
+                claudePaneState = newState
+                claudePaneWorking = false
+            }
+        }
     }
 }
 

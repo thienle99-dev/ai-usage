@@ -63,6 +63,14 @@ Choose any supported provider name. Stale cached values are labeled `stale`; mis
 
 For Claude Code, the status line also reads session context and prompt-cache telemetry from the JSON input supplied by the CLI. Context warnings use the Settings threshold (80% by default); a cache miss is shown for three minutes with its reported cause when available. Prompt-cache telemetry requires Claude Code v2.1.251 or later; diagnosed miss causes require v2.1.260 or later. These warnings are local presentation only.
 
+## Claude Code side pane
+
+In **Settings → General → Claude Code Side Pane**, install the AI Usage pane managed by this app. It shows cached provider quotas, live Claude Code sessions, and background jobs. Quotas are read from the local snapshot; the pane does not fetch usage, read conversation transcripts, or make model requests. Claude Code v2.1.292 or later is required for installation. After installing or updating, start a new session or run `/reload-plugins`; use `/usage-pane` to reopen the pane. In narrower terminals Claude Code places panes above the prompt instead of in a right sidebar. Removal is limited to installations recorded as managed by AI Usage Monitor.
+
+## Claude Code progress hand-off
+
+Progress hand-off is off by default in **Settings → General → Progress hand-off**. After opting in, choose a live Claude Code session and prepare a preview. The app reads only the last text user request from the tail of that session's local JSONL transcript, Git status and staged/unstaged diff, plus explicit TODO/checklist lines from that request and added diff lines. The preview is shown before anything is passed to Claude. Untracked files are listed but not read, the diff is capped at 60,000 characters, and temporary hand-off files are removed when Terminal starts the new interactive session. The new session starts with the reviewed prompt in the selected project directory.
+
 ## Development notes
 
 - [Technical research and architecture plan](docs/TECHNICAL_PLAN.md)

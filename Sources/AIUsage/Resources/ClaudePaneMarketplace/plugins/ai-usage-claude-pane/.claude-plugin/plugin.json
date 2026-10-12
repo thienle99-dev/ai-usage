@@ -1,0 +1,8 @@
+{
+  "name": "usage-side-pane",
+  "version": "0.1.0",
+  "description": "Show cached provider quotas, Claude Code conversations, and background jobs in a terminal pane.",
+  "author": {
+    "name": "AI Usage Monitor"
+  }
+}

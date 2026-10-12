@@ -13,8 +13,8 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 
 - [x] **Status line / hook:** Settings có thể cài/gỡ status line Claude Code do app quản lý; formatter CLI chỉ đọc snapshot local, không gọi API hay model. Không ghi đè status line tùy chỉnh; chỉ gỡ cấu hình còn khớp ownership record. CLI khác có thể gọi `scripts/ai-usage statusline --provider <name>` nếu hỗ trợ formatter hook.
 - [x] **Context và prompt-cache warnings:** Claude Code status line đọc context percentage và prompt-cache miss/cause trực tiếp từ JSON hook; ngưỡng context và hai cảnh báo bật/tắt riêng trong Settings. Không đọc transcript hay gửi request. Prompt-cache telemetry cần Claude Code v2.1.251+.
-- [ ] **Side pane cho Claude Code:** xem quota, hội thoại và background jobs trong terminal. Đây là tính năng riêng cho Claude Code.
-- [ ] **Progress hand-off:** chuyển yêu cầu gần nhất, thay đổi chưa commit và TODO sang phiên Claude Code mới; cần opt-in và đánh giá kỹ dữ liệu đọc từ log.
+- [x] **Side pane cho Claude Code:** pane riêng cho Claude Code hiển thị quota từ snapshot local, các phiên đang chạy và background jobs/agents. Cài/gỡ plugin local do app quản lý trong Settings; không đọc transcript, gọi API quota hay gửi model request. Dùng `/usage-pane` để mở lại; cần Claude Code v2.1.292+ để cài đặt.
+- [x] **Progress hand-off:** Settings có opt-in riêng, mặc định tắt. Khi người dùng chủ động tạo preview, app chỉ đọc yêu cầu text gần nhất từ tối đa 1 MiB cuối transcript của phiên Claude Code đang chạy, Git status/diff và TODO/checklist mới nhất; hiển thị đầy đủ prompt trước khi xác nhận mở phiên mới trong Terminal. Không gửi/ghi lại dữ liệu ở bước preview; untracked file chỉ hiện tên, không đọc nội dung. Giới hạn diff 60.000 ký tự.
 - [ ] **Token Saver / Beginner Mode:** tuỳ chọn điều chỉnh câu trả lời hoặc giải thích thuật ngữ; các chế độ gọi model có thể tiêu tốn quota.
 
 ## Lịch sử, báo cáo và giao diện
