@@ -764,6 +764,7 @@ struct SettingsWindowView: View {
     @State private var openCodeCookieHeader = ""
     @State private var openCodeCredentialMessage: String?
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
+    @State private var codexHomeMessage: String?
 
     var body: some View {
         @Bindable var store = store
@@ -939,6 +940,7 @@ struct SettingsWindowView: View {
                 ForEach(Provider.supported) { provider in
                     providerCard(provider)
                 }
+                codexHomesCard
                 cursorSessionCard
                 CopilotSessionCard()
                 openCodeSessionCard
@@ -1014,6 +1016,139 @@ struct SettingsWindowView: View {
         }
     }
 
+    private var codexHomesCard: some View {
+        SettingsCard(title: "Codex homes") {
+            SettingCaption(text: "Registered Codex home folders. Making one active moves it into ~/.codex so it becomes live; the current live folder moves back to its slot. Only folders move — credentials are never read or changed here.")
+            if store.codexLiveHomeIsUnregistered {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(UsageTheme.warning)
+                    SettingCaption(text: "The live folder doesn't match any registered home. Tell the app where this folder belongs when it's not active, then switching works.")
+                }
+                .padding(.top, 8)
+                HStack {
+                    Spacer()
+                    Button("Assign home slot…") { assignCodexHomeSlotWithPanel() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.codexSwitchInFlight)
+                }
+            }
+            if store.codexHomes.isEmpty {
+                HStack {
+                    Text("Only ~/.codex is in use.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                    Spacer()
+                    Button("Add folder…") { addCodexHomeWithPanel() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+                .padding(.top, 8)
+            } else {
+                ForEach(Array(store.codexHomes.enumerated()), id: \.element.id) { index, home in
+                    if index > 0 { SettingsDivider().padding(.leading, 38) }
+                    HStack(spacing: 10) {
+                        SettingsIconTile(
+                            systemImage: "folder",
+                            foreground: UsageTheme.secondaryText,
+                            background: UsageTheme.elevated
+                        )
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(home.displayName)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(home.lastSeenEmail == nil ? UsageTheme.secondaryText : UsageTheme.primaryText)
+                            Text(home.path)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            if store.isCodexSlotEmpty(home) && !store.isCodexHomeActive(home) {
+                                Text("Empty slot")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(UsageTheme.mutedText)
+                            }
+                        }
+                        Spacer(minLength: 6)
+                        if store.isCodexHomeActive(home) {
+                            HStack(spacing: 4) {
+                                Circle().fill(UsageTheme.codex).frame(width: 6, height: 6)
+                                Text("Active")
+                                    .font(.system(size: 9.5, weight: .medium))
+                                    .foregroundStyle(UsageTheme.secondaryText)
+                            }
+                        } else {
+                            Button("Make active") { Task { await store.switchCodexAccount(to: home) } }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(store.codexSwitchInFlight || store.refreshing.contains(.codex))
+                        }
+                        Button { store.removeCodexHome(home) } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.codexSwitchInFlight)
+                        .help("Remove \(home.displayName) from the registry (files stay on disk)")
+                    }
+                    .padding(.vertical, 7)
+                }
+                HStack {
+                    Spacer()
+                    Button("Add folder…") { addCodexHomeWithPanel() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.codexSwitchInFlight)
+                }
+                .padding(.top, 4)
+            }
+            if let error = store.codexSwitchError {
+                Text(error)
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 8)
+            }
+            if let message = codexHomeMessage {
+                Text(message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .padding(.top, 6)
+            }
+        }
+    }
+
+    private func addCodexHomeWithPanel() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a Codex home folder (the folder containing auth.json)."
+        panel.prompt = "Register"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.addCodexHome(at: url)
+            codexHomeMessage = nil
+        } catch {
+            codexHomeMessage = error.localizedDescription
+        }
+    }
+
+    private func assignCodexHomeSlotWithPanel() {
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.message = "Where does the live Codex folder belong when it is not active? Type a folder name inside one of your account folders. Nothing is moved now."
+        panel.prompt = "Assign slot"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.assignCodexHomeSlot(at: url)
+            codexHomeMessage = nil
+        } catch {
+            codexHomeMessage = error.localizedDescription
+        }
+    }
+
     private var cursorSessionCard: some View {
         SettingsCard(title: "Cursor session") {
             SettingCaption(text: "AI Usage Monitor reads Cursor.app's signed-in session locally and calls Cursor's usage summary. If that session is unavailable, you can supply a cursor.com session cookie as a fallback.")
@@ -1086,6 +1221,7 @@ struct SettingsWindowView: View {
         case .codex: "Local Codex app-server"
         case .cursor: "Cursor session · usage-summary web API"
         case .copilot: "GitHub OAuth · Copilot usage API"
+        case .gemini: "Gemini CLI OAuth · Code Assist quota API"
         case .openCode: "OpenCode dashboard session · web API"
         default: "Not integrated"
         }
@@ -1097,6 +1233,7 @@ struct SettingsWindowView: View {
         case .codex: "Sign in with Codex CLI or the ChatGPT app. AI Usage Monitor does not read Codex auth files."
         case .cursor: "Cursor.app authentication is read-only. An optional web session cookie is stored in Keychain."
         case .copilot: "Connect your GitHub account using device authorization. The token is stored in Keychain."
+        case .gemini: "Sign in with Google through Gemini CLI. Usage is read from its OAuth session; API key and Vertex AI auth are unsupported."
         case .openCode: "Add an OpenCode dashboard cookie in Settings. The session is stored in Keychain."
         default: "Usage tracking is not integrated for this provider."
         }
@@ -1154,14 +1291,14 @@ struct SettingsWindowView: View {
                             Text("AI Usage Monitor")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(UsageTheme.primaryText)
-                            Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, and OpenCode usage.")
+                            Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and OpenCode usage.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(UsageTheme.secondaryText)
                         }
                     }
                     .padding(.bottom, 4)
                     SettingsDivider()
-                    Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, and OpenCode usage use their session-authenticated web APIs. Provider interfaces can change.")
+                    Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, Gemini CLI, and OpenCode usage use their session-authenticated APIs. Provider interfaces can change.")
                         .font(.system(size: 12))
                         .foregroundStyle(UsageTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)

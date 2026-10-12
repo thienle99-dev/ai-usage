@@ -145,4 +145,25 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(ProviderFailure.http(401).errorDescription, "Authentication expired or access was denied.")
         XCTAssertEqual(ProviderFailure.http(503).errorDescription, "Service returned HTTP 503.")
     }
+
+    func testCodexHomeCodableRoundTrip() throws {
+        let home = CodexHome(
+            path: "/Users/test/codex-work",
+            lastSeenAccountID: "a@example.com",
+            lastSeenEmail: "a@example.com",
+            lastSeenAt: Date(timeIntervalSince1970: 1_000_000)
+        )
+        let decoded = try JSONDecoder().decode(CodexHome.self, from: JSONEncoder().encode(home))
+        XCTAssertEqual(decoded, home)
+        XCTAssertEqual(decoded.displayName, "a@example.com")
+        XCTAssertEqual(CodexHome(path: "/Users/test/y-slot").displayName, "y-slot")
+    }
+
+    func testLegacySnapshotWithoutAccountIDDecodesAsNil() throws {
+        let data = Data(#"{"provider":"Codex","windows":[],"lastSuccess":946684800}"#.utf8)
+        let snapshot = try JSONDecoder().decode(UsageSnapshot.self, from: data)
+        XCTAssertEqual(snapshot.provider, .codex)
+        XCTAssertNil(snapshot.accountID)
+        XCTAssertNil(snapshot.account)
+    }
 }

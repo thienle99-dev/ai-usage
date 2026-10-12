@@ -12,12 +12,14 @@ private struct HTTPFixture: Sendable {
 
 private actor FixtureHTTPDataLoader: HTTPDataLoading {
     private var fixtures: [HTTPFixture]
+    private var requests: [URLRequest] = []
     private(set) var requestCount = 0
 
     init(_ fixtures: [HTTPFixture]) { self.fixtures = fixtures }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requestCount += 1
+        requests.append(request)
         guard !fixtures.isEmpty else { throw URLError(.badServerResponse) }
         let fixture = fixtures.removeFirst()
         if fixture.shouldFail { throw URLError(.notConnectedToInternet) }
@@ -29,6 +31,8 @@ private actor FixtureHTTPDataLoader: HTTPDataLoading {
         )!
         return (fixture.body, response)
     }
+
+    func capturedRequests() -> [URLRequest] { requests }
 }
 
 private struct FixtureCodexSource: CodexAppServerDataSource {
@@ -52,6 +56,20 @@ private final class ScriptedMtimes: @unchecked Sendable {
         guard index < values.count else { return nil }
         return values[index]
     }
+}
+
+private func makeCodexHomeDir(at url: URL, marker: String) throws {
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    try Data("{}".utf8).write(to: url.appendingPathComponent("auth.json"))
+    try Data(marker.utf8).write(to: url.appendingPathComponent("marker.txt"))
+}
+
+private func codexMarker(in home: URL) -> String? {
+    try? String(contentsOf: home.appendingPathComponent("marker.txt"), encoding: .utf8)
+}
+
+private func codexAccountPayload(email: String, window: String = "primary", percent: Double = 10, durationMins: Double = 300) -> Data {
+    Data(#"{"result":{"email":"\#(email)","rateLimits":{"\#(window)":{"usedPercent":\#(percent),"windowDurationMins":\#(durationMins)}}}}"#.utf8)
 }
 
 private actor FetchCounter {
@@ -79,6 +97,44 @@ private struct FixtureProvider: UsageProvider {
 }
 
 final class ProviderAndStoreTests: XCTestCase {
+    func testGeminiParsingGroupsModelQuotasAndKeepsResetDates() throws {
+        let reset = "2026-10-13T12:30:00Z"
+        let payload = Data(#"{"buckets":[{"modelId":"gemini-2.5-pro","remainingFraction":0.6,"resetTime":"2026-10-13T12:30:00Z"},{"modelId":"gemini-2.5-flash","remainingFraction":0.25,"resetTime":"2026-10-13T12:30:00Z"},{"modelId":"gemini-2.5-flash-lite","remainingFraction":0.8,"resetTime":"2026-10-13T12:30:00Z"}]}"#.utf8)
+        let windows = try GeminiParsing.windows(payload)
+        XCTAssertEqual(windows.map(\.label), ["Pro", "Flash", "Flash Lite"])
+        XCTAssertEqual(windows.map(\.utilization), [40, 75, 20])
+        XCTAssertEqual(windows.first?.resetsAt, ISO8601DateFormatter().date(from: reset))
+    }
+
+    func testGeminiProviderUsesCLIAuthAndCodeAssistQuotaEndpoints() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("gemini-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".gemini", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"security":{"auth":{"selectedType":"oauth-personal"}}}"#.utf8).write(to: config.appendingPathComponent("settings.json"))
+        let expiry = Date.now.addingTimeInterval(3600).timeIntervalSince1970 * 1000
+        let credentials = try JSONSerialization.data(withJSONObject: ["access_token": "fixture-access-token", "expiry_date": expiry])
+        try credentials.write(to: config.appendingPathComponent("oauth_creds.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"cloudaicompanionProject":{"id":"gen-lang-client-test"},"currentTier":{"id":"standard-tier"}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"buckets":[{"modelId":"gemini-2.5-pro","remainingFraction":0.4,"resetTime":"2026-10-13T12:30:00Z"}]}"#.utf8))
+        ])
+        let snapshot = try await GeminiProvider(loader: loader, homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.provider, .gemini)
+        XCTAssertEqual(snapshot.account, "Paid")
+        XCTAssertEqual(snapshot.windows.first?.label, "Pro")
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 60)
+
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.map(\.url?.absoluteString), [
+            "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist",
+            "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota"
+        ])
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-access-token")
+        XCTAssertEqual(String(data: requests.last?.httpBody ?? Data(), encoding: .utf8), #"{"project":"gen-lang-client-test"}"#)
+    }
+
     func testUsageCardLayoutDefaultsAndUnknownPreferenceFallback() throws {
         XCTAssertEqual(UsageCardLayout.preference("twoColumns", fallback: .compactBalanced), .twoColumns)
         XCTAssertEqual(UsageCardLayout.preference("obsolete-layout", fallback: .twoColumns), .twoColumns)
@@ -275,7 +331,7 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(Provider.allCases.map(\.shortName), [
             "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Windsurf", "Cline", "Roo", "OpenCode"
         ])
-        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .openCode])
+        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .openCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }
@@ -337,6 +393,215 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(130)))
         XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(140)))
         XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(200)))
+    }
+
+    @MainActor
+    func testCodexHomeRegistryAddAssignRemoveAndPersist() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "live")
+        try makeCodexHomeDir(at: slotB, marker: "b")
+        let defaults = isolatedDefaults()
+        let liveAuth = live.appendingPathComponent("auth.json")
+        func makeStore() -> UsageStore {
+            UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAuthFileURL: liveAuth)
+        }
+        let store = makeStore()
+        XCTAssertThrowsError(try store.addCodexHome(at: live)) {
+            XCTAssertEqual($0 as? CodexHomeError, .isLiveHome)
+        }
+        let emptyDir = root.appendingPathComponent("empty", isDirectory: true)
+        try FileManager.default.createDirectory(at: emptyDir, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.addCodexHome(at: emptyDir)) {
+            XCTAssertEqual($0 as? CodexHomeError, .missingAuthFile)
+        }
+        XCTAssertThrowsError(try store.addCodexHome(at: liveAuth)) {
+            XCTAssertEqual($0 as? CodexHomeError, .notDirectory)
+        }
+        try store.addCodexHome(at: slotB)
+        XCTAssertThrowsError(try store.addCodexHome(at: slotB)) {
+            XCTAssertEqual($0 as? CodexHomeError, .duplicate)
+        }
+        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
+        try store.assignCodexHomeSlot(at: slotA)
+        XCTAssertThrowsError(try store.assignCodexHomeSlot(at: slotA)) {
+            XCTAssertEqual($0 as? CodexHomeError, .duplicate)
+        }
+        let takenDir = root.appendingPathComponent("taken", isDirectory: true)
+        try FileManager.default.createDirectory(at: takenDir, withIntermediateDirectories: true)
+        do {
+            try store.assignCodexHomeSlot(at: takenDir)
+            XCTFail("Expected occupied slot")
+        } catch CodexHomeError.occupiedSlot { } catch {
+            XCTFail("Wrong error: \(error)")
+        }
+        XCTAssertEqual(store.codexHomes.count, 2)
+        store.activeCodexHomePath = store.codexHomes.first?.path
+        let second = makeStore()
+        XCTAssertEqual(second.codexHomes, store.codexHomes)
+        XCTAssertEqual(second.activeCodexHomePath, store.activeCodexHomePath)
+        if let home = second.codexHomes.first {
+            second.removeCodexHome(home)
+        }
+        XCTAssertNil(second.activeCodexHomePath)
+        XCTAssertEqual(makeStore().codexHomes.count, 1)
+    }
+
+    @MainActor
+    func testCodexLiveIdentityBindsToSingleMissingSlot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "LIVE-A")
+        try makeCodexHomeDir(at: slotB, marker: "B")
+        let store = UsageStore(
+            providers: [CodexProvider(source: FixtureCodexSource(data: codexAccountPayload(email: "a@example.com")))],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json")
+        )
+        try store.addCodexHome(at: slotB)
+        try store.assignCodexHomeSlot(at: slotA)
+        await store.refresh()
+        XCTAssertEqual(store.activeCodexHomePath, store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "a@example.com")
+        XCTAssertFalse(store.codexLiveHomeIsUnregistered)
+    }
+
+    @MainActor
+    func testCodexHomeSwitchMovesFoldersAndUpdatesActive() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "LIVE-A")
+        try makeCodexHomeDir(at: slotB, marker: "B")
+        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
+        let store = UsageStore(
+            providers: [CodexProvider(source: source)],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json")
+        )
+        try store.addCodexHome(at: slotB)
+        try store.assignCodexHomeSlot(at: slotA)
+        await store.refresh()
+        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
+        await source.update(codexAccountPayload(email: "b@example.com"))
+        await store.switchCodexAccount(to: target)
+        XCTAssertNil(store.codexSwitchError)
+        XCTAssertFalse(store.codexSwitchInFlight)
+        XCTAssertEqual(codexMarker(in: live), "B")
+        XCTAssertEqual(codexMarker(in: slotA), "LIVE-A")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: slotB.path))
+        XCTAssertEqual(store.activeCodexHomePath, target.path)
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
+    }
+
+    @MainActor
+    func testCodexHomeSwitchRollsBackOnIdentityMismatch() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "LIVE-A")
+        try makeCodexHomeDir(at: slotB, marker: "B")
+        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
+        let store = UsageStore(
+            providers: [CodexProvider(source: source)],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json")
+        )
+        try store.addCodexHome(at: slotB)
+        try store.assignCodexHomeSlot(at: slotA)
+        await store.refresh()
+        if let index = store.codexHomes.firstIndex(where: { $0.path.hasSuffix("slot-b") }) {
+            store.codexHomes[index].lastSeenAccountID = "expected-b@example.com"
+        }
+        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
+        await source.update(codexAccountPayload(email: "c@example.com"))
+        await store.switchCodexAccount(to: target)
+        XCTAssertNotNil(store.codexSwitchError)
+        XCTAssertTrue(store.codexSwitchError?.contains("expected-b@example.com") ?? false)
+        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
+        XCTAssertEqual(codexMarker(in: slotB), "B")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: slotA.path))
+        XCTAssertEqual(store.activeCodexHomePath, store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
+    }
+
+    @MainActor
+    func testCodexHomeSwitchRefusesUnknownLiveOccupiedAndBusy() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "LIVE-A")
+        try makeCodexHomeDir(at: slotB, marker: "B")
+        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
+        let store = UsageStore(
+            providers: [CodexProvider(source: source)],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json")
+        )
+        try store.addCodexHome(at: slotB)
+        await store.refresh()
+        // Live identity matches nothing and no slot is missing: unknown live.
+        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
+        await store.switchCodexAccount(to: target)
+        XCTAssertNotNil(store.codexSwitchError)
+        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
+        XCTAssertEqual(codexMarker(in: slotB), "B")
+        // Busy: refresh in flight refuses without moving anything.
+        store.refreshing.insert(.codex)
+        store.codexSwitchError = nil
+        await store.switchCodexAccount(to: target)
+        XCTAssertEqual(store.codexSwitchError, CodexHomeError.busy.localizedDescription)
+        store.refreshing.remove(.codex)
+        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
+    }
+
+    @MainActor
+    func testCodexHomeSwitchRefusesOccupiedSourceSlot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
+        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "LIVE-A")
+        try makeCodexHomeDir(at: slotA, marker: "JUNK")
+        try makeCodexHomeDir(at: slotB, marker: "B")
+        let store = UsageStore(
+            providers: [CodexProvider(source: FixtureCodexSource(data: codexAccountPayload(email: "a@example.com")))],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json")
+        )
+        try store.addCodexHome(at: slotA)
+        try store.addCodexHome(at: slotB)
+        await store.refresh()
+        // Simulate a stale belief that slot A's folder is live while its
+        // folder is actually still stashed on disk.
+        store.activeCodexHomePath = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
+        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
+        await store.switchCodexAccount(to: target)
+        XCTAssertNotNil(store.codexSwitchError)
+        XCTAssertTrue(store.codexSwitchError?.contains("occupied") ?? false)
+        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
+        XCTAssertEqual(codexMarker(in: slotB), "B")
     }
 
     private func isolatedDefaults() -> UserDefaults {
