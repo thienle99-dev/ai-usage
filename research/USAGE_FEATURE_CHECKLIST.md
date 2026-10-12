@@ -12,7 +12,7 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 ## Tích hợp CLI và phiên làm việc
 
 - [x] **Status line / hook:** Settings có thể cài/gỡ status line Claude Code do app quản lý; formatter CLI chỉ đọc snapshot local, không gọi API hay model. Không ghi đè status line tùy chỉnh; chỉ gỡ cấu hình còn khớp ownership record. CLI khác có thể gọi `scripts/ai-usage statusline --provider <name>` nếu hỗ trợ formatter hook.
-- [ ] **Context và prompt-cache warnings:** cảnh báo context gần đầy hoặc cache miss. Phụ thuộc vào telemetry của từng CLI.
+- [x] **Context và prompt-cache warnings:** Claude Code status line đọc context percentage và prompt-cache miss/cause trực tiếp từ JSON hook; ngưỡng context và hai cảnh báo bật/tắt riêng trong Settings. Không đọc transcript hay gửi request. Prompt-cache telemetry cần Claude Code v2.1.251+.
 - [ ] **Side pane cho Claude Code:** xem quota, hội thoại và background jobs trong terminal. Đây là tính năng riêng cho Claude Code.
 - [ ] **Progress hand-off:** chuyển yêu cầu gần nhất, thay đổi chưa commit và TODO sang phiên Claude Code mới; cần opt-in và đánh giá kỹ dữ liệu đọc từ log.
 - [ ] **Token Saver / Beginner Mode:** tuỳ chọn điều chỉnh câu trả lời hoặc giải thích thuật ngữ; các chế độ gọi model có thể tiêu tốn quota.

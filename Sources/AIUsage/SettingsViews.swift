@@ -290,6 +290,9 @@ struct GeneralSettingsView: View {
     var store: Bindable<UsageStore>
     @State private var claudeStatusLineState: ClaudeStatusLineManager.State = .notInstalled
     @State private var claudeStatusLineError: String?
+    @AppStorage("contextWarningsEnabled") private var contextWarningsEnabled = true
+    @AppStorage("contextWarningThreshold") private var contextWarningThreshold = 80.0
+    @AppStorage("promptCacheWarningsEnabled") private var promptCacheWarningsEnabled = true
 
     var body: some View {
         SettingsPage(title: "General", subtitle: "Configure your AI usage monitor.") {
@@ -362,6 +365,32 @@ struct GeneralSettingsView: View {
                     SettingsErrorText(text: claudeStatusLineError)
                         .padding(.vertical, 4)
                 }
+            }
+            SettingsSection(title: "Context & Cache Warnings") {
+                SettingsToggleRow(
+                    icon: "rectangle.expand.vertical",
+                    iconColor: UsageTheme.warning,
+                    title: "Context nearing limit",
+                    description: "Show a warning in Claude Code's status line at the selected context usage threshold.",
+                    isOn: $contextWarningsEnabled
+                )
+                if contextWarningsEnabled {
+                    SettingsRowDivider()
+                    ThresholdSettingRow(
+                        label: "Context",
+                        value: $contextWarningThreshold,
+                        range: 50...95,
+                        color: UsageTheme.warning
+                    )
+                }
+                SettingsRowDivider()
+                SettingsToggleRow(
+                    icon: "arrow.trianglehead.2.clockwise.rotate.90",
+                    iconColor: UsageTheme.warning,
+                    title: "Prompt cache miss",
+                    description: "Briefly show recent cache misses and the cause when Claude Code provides telemetry (v2.1.251 or later).",
+                    isOn: $promptCacheWarningsEnabled
+                )
             }
             SettingsSection(title: "Notifications") {
                 SettingsToggleRow(

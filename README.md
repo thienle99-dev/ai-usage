@@ -61,6 +61,8 @@ The formatter can also be used by compatible shell prompts and hooks:
 
 Choose any supported provider name. Stale cached values are labeled `stale`; missing quota prints an unavailable message.
 
+For Claude Code, the status line also reads session context and prompt-cache telemetry from the JSON input supplied by the CLI. Context warnings use the Settings threshold (80% by default); a cache miss is shown for three minutes with its reported cause when available. Prompt-cache telemetry requires Claude Code v2.1.251 or later; diagnosed miss causes require v2.1.260 or later. These warnings are local presentation only.
+
 ## Development notes
 
 - [Technical research and architecture plan](docs/TECHNICAL_PLAN.md)

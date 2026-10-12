@@ -1,8 +1,10 @@
 import Foundation
+import Darwin
 
 enum CLIStatusLine {
     static let managedMarker = "--managed-by-ai-usage-monitor"
     private static let maximumSnapshotAge: TimeInterval = 15 * 60
+    private static let recentCacheMissInterval: TimeInterval = 180
 
     static func run(arguments: [String]) -> Int32 {
         var provider = Provider.claude
@@ -26,21 +28,56 @@ enum CLIStatusLine {
 
         let cacheURL = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
-        guard let data = try? Data(contentsOf: cacheURL),
-              let snapshots = try? JSONDecoder().decode([UsageSnapshot].self, from: data),
-              let snapshot = snapshots.first(where: { $0.provider == provider }),
-              !snapshot.validWindows.isEmpty else {
-            print("\(provider.shortName) quota unavailable")
-            return 0
+        var output = [provider.shortName]
+        if let data = try? Data(contentsOf: cacheURL),
+           let snapshots = try? JSONDecoder().decode([UsageSnapshot].self, from: data),
+           let snapshot = snapshots.first(where: { $0.provider == provider }),
+           !snapshot.validWindows.isEmpty {
+            let stale = snapshot.error != nil || snapshot.lastSuccess == .distantPast
+                || Date.now.timeIntervalSince(snapshot.lastSuccess) > maximumSnapshotAge
+            output += snapshot.validWindows.map { window in
+                "\(shortLabel(window.label)) \(Int((window.validUtilization ?? 0).rounded()))%"
+            }
+            if stale { output.append("stale") }
+        } else {
+            output.append("quota unavailable")
         }
 
-        let stale = snapshot.error != nil || snapshot.lastSuccess == .distantPast
-            || Date.now.timeIntervalSince(snapshot.lastSuccess) > maximumSnapshotAge
-        let metrics = snapshot.validWindows.map { window in
-            "\(shortLabel(window.label)) \(Int((window.validUtilization ?? 0).rounded()))%"
+        if let input = readSessionInput(),
+           let session = try? JSONSerialization.jsonObject(with: input) as? [String: Any] {
+            appendContextWarning(from: session, to: &output)
         }
-        print(([provider.shortName] + metrics + (stale ? ["stale"] : [])).joined(separator: " · "))
+        print(output.joined(separator: " · "))
         return 0
+    }
+
+    private static func readSessionInput() -> Data? {
+        guard isatty(STDIN_FILENO) != 1 else { return nil }
+        let data = FileHandle.standardInput.readDataToEndOfFile()
+        return data.isEmpty ? nil : data
+    }
+
+    private static func appendContextWarning(from session: [String: Any], to output: inout [String]) {
+        let defaults = UserDefaults.standard
+        let contextEnabled = defaults.object(forKey: "contextWarningsEnabled") as? Bool ?? true
+        let threshold = min(100, max(0, defaults.object(forKey: "contextWarningThreshold") as? Double ?? 80))
+        if contextEnabled,
+           let context = session["context_window"] as? [String: Any],
+           let percent = (context["used_percentage"] as? NSNumber)?.doubleValue,
+           percent.isFinite, (0...100).contains(percent) {
+            let prefix = percent >= threshold ? "⚠ Context" : "Context"
+            output.append("\(prefix) \(Int(percent.rounded()))%")
+        }
+
+        let cacheWarningsEnabled = defaults.object(forKey: "promptCacheWarningsEnabled") as? Bool ?? true
+        guard cacheWarningsEnabled,
+              let cache = session["prompt_cache"] as? [String: Any],
+              let missTime = (cache["last_miss_at"] as? NSNumber)?.doubleValue else { return }
+        let age = Date.now.timeIntervalSince1970 - missTime
+        guard age >= 0, age <= recentCacheMissInterval else { return }
+        let cause = (cache["last_miss_cause"] as? [String: Any])?["causes"] as? [String]
+        let explanation = cause?.first.map { " (\($0.replacingOccurrences(of: "_", with: " ")))" } ?? ""
+        output.append("⚠ Cache miss\(explanation)")
     }
 
     private static func shortLabel(_ label: String) -> String {
@@ -85,12 +122,12 @@ enum ClaudeStatusLineManager {
     }
 
     static func state(settingsURL: URL, ownershipURL: URL) -> State {
-        let command = ownedCommand(at: ownershipURL)
+        let ownedLine = ownedStatusLine(at: ownershipURL)
         let settings: [String: Any]
         do { settings = try loadSettings(at: settingsURL) }
         catch { return .unavailable }
-        guard let current = currentCommand(settings["statusLine"]) else { return .notInstalled }
-        guard let command, current == command else { return .customStatusLine }
+        guard let current = settings["statusLine"] as? [String: Any] else { return .notInstalled }
+        guard let ownedLine, sameJSON(current, ownedLine) else { return .customStatusLine }
         return .installed
     }
 
@@ -101,11 +138,12 @@ enum ClaudeStatusLineManager {
             throw ManagerError.customStatusLine
         }
 
-        settings["statusLine"] = ["type": "command", "command": command, "padding": 0]
+        let statusLine: [String: Any] = ["type": "command", "command": command, "padding": 0, "refreshInterval": 60]
+        settings["statusLine"] = statusLine
         try save(settings, to: settingsURL)
         do {
             try FileManager.default.createDirectory(at: ownershipURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONSerialization.data(withJSONObject: ["command": command], options: [.sortedKeys])
+            try JSONSerialization.data(withJSONObject: ["command": command, "statusLine": statusLine], options: [.sortedKeys])
                 .write(to: ownershipURL, options: .atomic)
         } catch {
             if currentCommand(at: settingsURL) == command {
@@ -117,10 +155,13 @@ enum ClaudeStatusLineManager {
     }
 
     static func uninstall(settingsURL: URL, ownershipURL: URL) throws {
-        guard let command = ownedCommand(at: ownershipURL), currentCommand(at: settingsURL) == command else {
+        guard let ownedLine = ownedStatusLine(at: ownershipURL) else {
             throw ManagerError.notManaged
         }
         var settings = try loadSettings(at: settingsURL)
+        guard let current = settings["statusLine"] as? [String: Any], sameJSON(current, ownedLine) else {
+            throw ManagerError.notManaged
+        }
         settings.removeValue(forKey: "statusLine")
         try save(settings, to: settingsURL)
         try? FileManager.default.removeItem(at: ownershipURL)
@@ -145,10 +186,10 @@ enum ClaudeStatusLineManager {
         }
     }
 
-    private static func ownedCommand(at url: URL) -> String? {
+    private static func ownedStatusLine(at url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        return object["command"] as? String
+        return object["statusLine"] as? [String: Any]
     }
 
     private static func currentCommand(at url: URL) -> String? {
@@ -158,6 +199,12 @@ enum ClaudeStatusLineManager {
 
     private static func currentCommand(_ value: Any?) -> String? {
         (value as? [String: Any])?["command"] as? String
+    }
+
+    private static func sameJSON(_ lhs: [String: Any], _ rhs: [String: Any]) -> Bool {
+        guard let left = try? JSONSerialization.data(withJSONObject: lhs, options: [.sortedKeys]),
+              let right = try? JSONSerialization.data(withJSONObject: rhs, options: [.sortedKeys]) else { return false }
+        return left == right
     }
 
     private static func shellQuote(_ value: String) -> String {
