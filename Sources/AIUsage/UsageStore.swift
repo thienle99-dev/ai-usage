@@ -9,6 +9,7 @@ import ServiceManagement
     var visibleProviders: Set<Provider> = Set(Provider.supported) {
         didSet {
             defaults.set(visibleProviders.map(\.rawValue), forKey: "visibleProviders")
+            publishWidgetSnapshot()
             if publicServiceStatusMonitoringEnabled {
                 Task { await refreshPublicServiceStatus(force: true) }
             }
@@ -139,6 +140,7 @@ import ServiceManagement
         if let data = try? Data(contentsOf: self.cacheURL), let cached = try? JSONDecoder().decode([UsageSnapshot].self, from: data) {
             snapshots = Dictionary(uniqueKeysWithValues: cached.map { ($0.provider, $0) })
             lastRefreshAttempt = cached.map(\.lastSuccess).filter { $0 != .distantPast }.max()
+            publishWidgetSnapshot()
         }
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         schedule()
@@ -587,5 +589,10 @@ import ServiceManagement
     private func save() {
         try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         if let data = try? JSONEncoder().encode(Array(snapshots.values)) { try? data.write(to: cacheURL, options: .atomic) }
+        publishWidgetSnapshot()
+    }
+
+    private func publishWidgetSnapshot() {
+        WidgetSnapshotSharing.write(snapshots: snapshots, order: Provider.supported, visible: visibleProviders)
     }
 }

@@ -24,6 +24,8 @@ The app is an agent-style menu bar app, so it has no Dock icon. Open Settings fr
 
 The popover shows provider cards with the usage windows actually returned by the provider. Percentages outside 0–100 or missing percentages are treated as unavailable; the app does not invent values. The menu bar's combined percentage is the highest valid utilization among enabled providers. Other modes are icon only, provider-specific values, or a warning for any enabled window at/above the critical threshold.
 
+The packaged app includes a macOS 14+ WidgetKit widget in small and medium sizes. Add **AI Usage Quota** from the macOS widget gallery to the desktop or Notification Center. It shows cached data for enabled providers and updates when the app refreshes; the widget never calls provider APIs. The widget uses the first valid usage window returned by each provider in the app's standard provider order. The shared container uses `group.com.local.aiusage`; distribution signing must register this App Group and sign the host app and widget with the same team. The local packaging script uses ad-hoc signing.
+
 Refresh choices are 1, 5, 10, or 15 minutes, plus Manual only. Manual only fetches once at app launch and waits for an explicit refresh afterward. The Refresh button fetches providers independently; if one fails, the other can still update. A prior successful snapshot stays visible and is marked stale after a failure. Preferences and snapshots are stored under `~/Library/Application Support/AIUsage/`.
 
 ## Credentials and data sources
