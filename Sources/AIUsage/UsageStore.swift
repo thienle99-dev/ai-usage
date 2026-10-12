@@ -35,6 +35,10 @@ import ServiceManagement
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let cacheURL: URL
     @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private let codexAuthFileURL: URL
+    @ObservationIgnored private let fileModificationDate: @Sendable (String) -> Date?
+    @ObservationIgnored private var codexAuthWatcher: Task<Void, Never>?
+    @ObservationIgnored private var lastSeenCodexAuthMtime: Date?
 
     var refreshInterval: Int { refreshPolicy.interval.map { Int($0.components.seconds) } ?? 0 }
     var isRefreshing: Bool { !refreshing.isEmpty }
@@ -57,15 +61,19 @@ import ServiceManagement
     }
 
     init(
-        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider(), OpenCodeProvider()],
+        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider(), CopilotProvider(), OpenCodeProvider()],
         defaults: UserDefaults = .standard,
         cacheURL: URL? = nil,
-        startImmediately: Bool = true
+        startImmediately: Bool = true,
+        codexAuthFileURL: URL? = nil,
+        fileModificationDate: (@Sendable (String) -> Date?)? = nil
     ) {
         self.providers = providers
         self.defaults = defaults
         self.cacheURL = cacheURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
+        self.codexAuthFileURL = codexAuthFileURL ?? Self.defaultCodexAuthFileURL()
+        self.fileModificationDate = fileModificationDate ?? Self.defaultModificationDate
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
         }
@@ -91,6 +99,7 @@ import ServiceManagement
         }
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         schedule()
+        startCodexAuthWatcher()
         if startImmediately { Task { await self.refresh() } }
     }
 

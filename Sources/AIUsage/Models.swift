@@ -1,5 +1,31 @@
 import Foundation
 
+enum UsageCardLayout: String, Codable, CaseIterable, Identifiable, Sendable {
+    case compactBalanced
+    case twoColumns
+    case minimalRows
+    case collapsible
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .compactBalanced: "Compact Balanced"
+        case .twoColumns: "Two Columns"
+        case .minimalRows: "Minimal Rows"
+        case .collapsible: "Collapsible"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .compactBalanced: "Full-width progress bars"
+        case .twoColumns: "Side-by-side usage metrics"
+        case .minimalRows: "Maximum information density"
+        case .collapsible: "Expand details on demand"
+        }
+    }
+    static func preference(_ rawValue: String, fallback: Self) -> Self { Self(rawValue: rawValue) ?? fallback }
+}
+
 enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex = "Codex"
     case claude = "Claude"
@@ -58,8 +84,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openCode: "chevron.left.forwardslash.chevron.right"
         }
     }
-    var isUsageSupported: Bool { self == .codex || self == .claude || self == .cursor || self == .openCode }
-    static let supported: [Provider] = [.codex, .claude, .cursor, .openCode]
+    var isUsageSupported: Bool { self == .codex || self == .claude || self == .cursor || self == .copilot || self == .openCode }
+    static let supported: [Provider] = [.codex, .claude, .cursor, .copilot, .openCode]
 }
 
 enum ProviderStatus: String, Codable, Sendable {
@@ -161,6 +187,10 @@ struct UsageSnapshot: Codable, Identifiable, Sendable {
     let provider: Provider
     var windows: [UsageWindow]
     var account: String?
+    /// Stable account identity (email preferred, else provider account id).
+    /// Used to detect external account swaps (e.g. a different folder moved
+    /// into `~/.codex`). Missing keys in old caches decode as nil.
+    var accountID: String? = nil
     var lastSuccess: Date
     var error: String?
     var status: ProviderStatus? = .connected
@@ -395,7 +425,7 @@ enum UsageParsing {
         return formatter.string(from: NSNumber(value: value)) ?? "\(currency) \(value)"
     }
 
-    static func codex(_ data: Data) throws -> (windows: [UsageWindow], account: String?) {
+    static func codex(_ data: Data) throws -> (windows: [UsageWindow], account: String?, accountID: String?) {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderFailure.invalidResponse("Codex returned malformed usage data.")
         }
@@ -429,7 +459,28 @@ enum UsageParsing {
         // compatibility view both contain the same pool.
         var unique: [String: UsageWindow] = [:]
         for window in windows { unique[window.label] = window }
-        return (Array(unique.values).sorted { $0.label < $1.label }, account.isEmpty ? nil : account)
+        return (Array(unique.values).sorted { $0.label < $1.label }, account.isEmpty ? nil : account, codexAccountID(value: value, account: accountObject))
+    }
+
+    /// Stable Codex account identity for swap detection: email preferred,
+    /// otherwise an explicit provider account/user id. Only string values are
+    /// accepted so numeric JSON-RPC ids can never become an identity. Missing
+    /// identity stays nil so callers keep the previously bound account.
+    private static func codexAccountID(value: [String: Any], account: [String: Any]?) -> String? {
+        let candidates: [Any?] = [
+            value["email"], account?["email"],
+            value["account_id"], account?["account_id"],
+            value["accountId"], account?["accountId"],
+            value["user_id"], account?["user_id"],
+            value["userId"], account?["userId"],
+        ]
+        for candidate in candidates {
+            if let id = candidate as? String {
+                let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
     }
 
     private static func number(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }

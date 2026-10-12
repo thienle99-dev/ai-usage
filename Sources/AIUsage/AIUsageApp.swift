@@ -76,7 +76,7 @@ private struct ProviderIconNavigationView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal) {
-                HStack(spacing: 3) {
+                HStack(spacing: 6) {
                     ProviderNavigationItem(
                         title: "All",
                         accessibilityName: "All providers",
@@ -97,13 +97,13 @@ private struct ProviderIconNavigationView: View {
                         .id(provider.rawValue)
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
             }
             .scrollIndicators(.hidden)
-            .frame(height: 64)
-            .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(UsageTheme.separator.opacity(0.75), lineWidth: 0.7))
+            .frame(height: 58)
+            .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).stroke(UsageTheme.separator.opacity(0.75), lineWidth: 0.7))
             .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
             .onChange(of: selection) { _, _ in
                 if reduceMotion {
@@ -131,28 +131,28 @@ private struct ProviderNavigationItem: View {
     let action: () -> Void
 
     private var itemBackground: Color {
-        if isSelected { return UsageTheme.elevated }
-        if isHovered { return UsageTheme.elevated.opacity(0.62) }
+        if isSelected { return accent.opacity(0.12) }
+        if isHovered { return UsageTheme.elevated.opacity(0.5) }
         return .clear
     }
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            VStack(spacing: 3) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 19, weight: isSelected ? .semibold : .regular))
+                    .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
                     .foregroundStyle(isSelected ? accent : UsageTheme.secondaryText)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 18, height: 18)
                 Text(title)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(isSelected ? UsageTheme.primaryText : UsageTheme.secondaryText)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
                     .frame(maxWidth: .infinity)
             }
-            .frame(width: 54, height: 52)
-            .background(itemBackground, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .frame(width: 50, height: 46)
+            .background(itemBackground, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(.plain)
         .onHover { isHovered = $0 }
@@ -171,6 +171,9 @@ struct UsagePopover: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var quitHovered = false
+    @AppStorage("overviewCardLayout") private var overviewCardLayoutRaw = UsageCardLayout.twoColumns.rawValue
+    @AppStorage("detailCardLayout") private var detailCardLayoutRaw = UsageCardLayout.compactBalanced.rawValue
+    @AppStorage("useUnifiedCardLayout") private var useUnifiedCardLayout = false
 
     private var shownProviders: [Provider] {
         Provider.supported.filter { provider in
@@ -194,7 +197,7 @@ struct UsagePopover: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(shownProviders) { provider in
-                            ProviderUsageCard(provider: provider) {
+                            ProviderUsageCard(provider: provider, layout: activeLayout) {
                                 Task { await store.refresh(provider: provider) }
                             }
                         }
@@ -210,6 +213,15 @@ struct UsagePopover: View {
         .frame(width: 380, height: 620, alignment: .top)
         .background(UsageTheme.background)
         .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
+    }
+
+    private var activeLayout: UsageCardLayout {
+        if useUnifiedCardLayout {
+            return UsageCardLayout.preference(overviewCardLayoutRaw, fallback: .twoColumns)
+        }
+        return store.selectedProvider == nil
+            ? UsageCardLayout.preference(overviewCardLayoutRaw, fallback: .twoColumns)
+            : UsageCardLayout.preference(detailCardLayoutRaw, fallback: .compactBalanced)
     }
 
     private var emptyProviderState: some View {
@@ -248,8 +260,7 @@ struct UsagePopover: View {
             } else {
                 Spacer(minLength: 0)
                 Button("Open Settings…") {
-                    NSApp.activate(ignoringOtherApps: true)
-                    openWindow(id: "settings")
+                    presentSettingsWindow()
                 }
                 .buttonStyle(.borderless)
             }
@@ -287,14 +298,40 @@ struct UsagePopover: View {
             .disabled(store.isRefreshing)
 
             Button {
-                NSApp.activate(ignoringOtherApps: true)
-                openWindow(id: "settings")
+                presentSettingsWindow()
             } label: {
                 Image(systemName: "gearshape").frame(width: 30, height: 30)
             }
             .buttonStyle(QuietIconButtonStyle())
             .help("Settings")
             .accessibilityLabel("Open Settings")
+
+            Menu {
+                Section(store.selectedProvider == nil ? "Overview Layout" : "Provider Detail Layout") {
+                    ForEach(UsageCardLayout.allCases) { layout in
+                        Button {
+                            if useUnifiedCardLayout || store.selectedProvider == nil {
+                                overviewCardLayoutRaw = layout.rawValue
+                            } else {
+                                detailCardLayoutRaw = layout.rawValue
+                            }
+                        } label: {
+                            if activeLayout == layout { Label(layout.title, systemImage: "checkmark") }
+                            else { Text(layout.title) }
+                        }
+                    }
+                }
+                Divider()
+                Button("Customize in Settings…") { presentSettingsWindow() }
+            } label: {
+                Image(systemName: "rectangle.grid.2x2")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .menuStyle(.borderlessButton)
+            .buttonStyle(QuietIconButtonStyle())
+            .help("Card layout")
+            .accessibilityLabel("Choose card layout")
         }
     }
 
@@ -336,72 +373,157 @@ struct UsagePopover: View {
         }
         .padding(.top, 2)
     }
+
+    private func presentSettingsWindow() {
+        openWindow(id: "settings")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.activate(ignoringOtherApps: true)
+            NSApp.windows.first(where: { $0.title == "Settings" })?.makeKeyAndOrderFront(nil)
+        }
+    }
 }
 
 private struct ProviderUsageCard: View {
     @Environment(UsageStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("providerCardExpansion") private var expansionOverrides = ""
+    @AppStorage("collapsibleInitiallyExpanded") private var initiallyExpanded = false
     let provider: Provider
+    let layout: UsageCardLayout
     let retry: () -> Void
 
     private var snapshot: UsageSnapshot? { store.snapshots[provider] }
     private var status: ProviderStatus { store.status(for: provider) }
+    private var isExpanded: Bool {
+        let overrides = Dictionary(uniqueKeysWithValues: expansionOverrides.split(separator: ",").compactMap { entry -> (String, Bool)? in
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            return (String(parts[0]), parts[1] == "1")
+        })
+        return overrides[provider.rawValue] ?? initiallyExpanded
+    }
+    private var primaryWindow: UsageWindow? {
+        // Provider window order is authoritative; choose its first valid metric for the collapsed summary.
+        snapshot?.windows.first(where: { $0.validUtilization != nil }) ?? snapshot?.windows.first
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 9) {
-                Image(systemName: provider.systemImage)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(UsageTheme.provider(provider))
-                    .frame(width: 28, height: 28)
-                    .background(UsageTheme.provider(provider).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(provider.displayName).font(.system(size: 14, weight: .semibold))
-                    if let account = snapshot?.account {
-                        Text(account).font(.system(size: 10.5)).foregroundStyle(UsageTheme.secondaryText).lineLimit(1).truncationMode(.middle)
+        VStack(alignment: .leading, spacing: 10) {
+            if layout == .collapsible {
+                Button { toggleExpanded() } label: {
+                    HStack(spacing: 8) {
+                        providerHeader
+                        Spacer(minLength: 3)
+                        if let primaryWindow, let amount = primaryWindow.validUtilization {
+                            Text("\(Int(amount.rounded()))%")
+                                .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(usageColor(for: primaryWindow))
+                        }
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(UsageTheme.mutedText)
                     }
+                    .contentShape(Rectangle())
                 }
-                Spacer(minLength: 6)
-                ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(provider.displayName), \(isExpanded ? "expanded" : "collapsed")")
+                .accessibilityHint("Toggles usage details")
+                if snapshot?.windows.isEmpty == true {
+                    emptyState(for: snapshot)
+                } else if isExpanded {
+                    metricContent(for: .compactBalanced)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } else if let primaryWindow {
+                    UsageProgressRow(window: primaryWindow, provider: provider, presentation: .collapsed)
+                }
+            } else {
+                providerHeader
+                metricContent(for: layout)
             }
 
-            if let snapshot {
-                if snapshot.windows.isEmpty {
-                    emptyState(for: snapshot)
-                } else {
-                    VStack(spacing: 14) {
-                        ForEach(snapshot.windows) { window in
-                            UsageProgressRow(window: window, provider: provider)
-                        }
-                    }
+            if let snapshot, snapshot.isStale {
+                HStack(alignment: .top, spacing: 5) {
+                    Image(systemName: "clock.arrow.circlepath")
+                    Text("Stale · \(snapshot.error ?? "Refresh failed")")
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 }
-                if snapshot.isStale {
-                    HStack(alignment: .top, spacing: 5) {
-                        Image(systemName: "clock.arrow.circlepath")
-                        Text("Stale · \(snapshot.error ?? "Refresh failed")")
-                            .lineLimit(3).fixedSize(horizontal: false, vertical: true)
-                    }
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(UsageTheme.warning)
-                }
-                if snapshot.lastSuccess != .distantPast {
-                    Text("Last successful update \(snapshot.lastSuccess, style: .relative)")
-                        .font(.system(size: 10)).foregroundStyle(UsageTheme.mutedText)
-                }
-            } else if store.refreshing.contains(provider) {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Loading usage…").font(.system(size: 12)).foregroundStyle(UsageTheme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 4)
-            } else {
-                emptyState(for: nil)
+                .font(.system(size: 10.5)).foregroundStyle(UsageTheme.warning)
             }
         }
-        .padding(15)
+        .padding(layout == .minimalRows ? 11 : 12)
         .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(UsageTheme.separator.opacity(0.8), lineWidth: 0.7))
+    }
+
+    private var providerHeader: some View {
+        HStack(spacing: 9) {
+            Image(systemName: provider.systemImage)
+                .font(.system(size: layout == .minimalRows ? 12 : 13, weight: .semibold))
+                .foregroundStyle(UsageTheme.provider(provider))
+                .frame(width: layout == .minimalRows ? 24 : 28, height: layout == .minimalRows ? 24 : 28)
+                .background(UsageTheme.provider(provider).opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(provider.displayName).font(.system(size: 14, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.8)
+                if let account = snapshot?.account {
+                    Text(account).font(.system(size: 10.5)).foregroundStyle(UsageTheme.secondaryText).lineLimit(1).truncationMode(.middle)
+                }
+            }
+            Spacer(minLength: 4)
+            ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
+        }
+    }
+
+    @ViewBuilder private func metricContent(for layout: UsageCardLayout) -> some View {
+        if let snapshot {
+            if snapshot.windows.isEmpty {
+                emptyState(for: snapshot)
+            } else {
+                switch layout {
+                case .compactBalanced:
+                    VStack(spacing: 11) {
+                        ForEach(snapshot.windows) { window in UsageProgressRow(window: window, provider: provider) }
+                    }
+                case .twoColumns:
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 8)], alignment: .leading, spacing: 8) {
+                        ForEach(snapshot.windows) { window in
+                            UsageProgressRow(window: window, provider: provider, presentation: .tile)
+                        }
+                    }
+                case .minimalRows:
+                    VStack(spacing: 5) {
+                        ForEach(snapshot.windows) { window in UsageProgressRow(window: window, provider: provider, presentation: .minimal) }
+                    }
+                case .collapsible:
+                    VStack(spacing: 11) {
+                        ForEach(snapshot.windows) { window in UsageProgressRow(window: window, provider: provider) }
+                    }
+                }
+            }
+        } else if store.refreshing.contains(provider) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Loading usage…").font(.system(size: 12)).foregroundStyle(UsageTheme.secondaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 4)
+        } else {
+            emptyState(for: nil)
+        }
+    }
+
+    private func usageColor(for window: UsageWindow) -> Color {
+        guard let value = window.validUtilization else { return UsageTheme.mutedText }
+        if value >= store.criticalThreshold { return UsageTheme.critical }
+        if value >= store.warningThreshold { return UsageTheme.warning }
+        return UsageTheme.provider(provider)
+    }
+
+    private func toggleExpanded() {
+        var overrides = Dictionary(uniqueKeysWithValues: expansionOverrides.split(separator: ",").compactMap { entry -> (String, Bool)? in
+            let parts = entry.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2 else { return nil }
+            return (String(parts[0]), parts[1] == "1")
+        })
+        overrides[provider.rawValue] = !isExpanded
+        expansionOverrides = overrides.keys.sorted().map { "\($0)=\(overrides[$0] == true ? 1 : 0)" }.joined(separator: ",")
     }
 
     @ViewBuilder private func emptyState(for snapshot: UsageSnapshot?) -> some View {
@@ -423,11 +545,16 @@ private struct ProviderUsageCard: View {
     }
 }
 
+private enum UsageMetricPresentation {
+    case balanced, tile, minimal, collapsed
+}
+
 private struct UsageProgressRow: View {
     @Environment(UsageStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let window: UsageWindow
     let provider: Provider
+    var presentation: UsageMetricPresentation = .balanced
 
     private var usageColor: Color {
         guard let value = window.validUtilization else { return UsageTheme.mutedText }
@@ -437,36 +564,140 @@ private struct UsageProgressRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(window.label).font(.system(size: 12, weight: .medium)).foregroundStyle(UsageTheme.primaryText)
-                Spacer()
-                if let amount = window.validUtilization {
-                    Text("\(Int(amount.rounded()))%")
-                        .font(.system(size: 13, weight: .semibold).monospacedDigit())
-                        .foregroundStyle(usageColor)
-                } else {
-                    Text("Unavailable").font(.system(size: 10.5)).foregroundStyle(UsageTheme.mutedText)
-                        .accessibilityLabel("Usage percentage unavailable because the source value is invalid")
+        Group {
+            switch presentation {
+            case .balanced:
+                VStack(alignment: .leading, spacing: 4) {
+                    metricHeading(showReset: true)
+                    progressBar(height: 6)
+                    if let detail = window.detail { Text(detail).font(.system(size: 10.5)).foregroundStyle(UsageTheme.secondaryText) }
+                }
+            case .tile:
+                VStack(alignment: .leading, spacing: 7) {
+                    metricHeading(showReset: false)
+                    progressBar(height: 5)
+                    resetLabel
+                }
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(UsageTheme.elevated.opacity(0.65), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityElement(children: .contain)
+            case .minimal:
+                HStack(spacing: 7) {
+                    Text(shortWindowLabel)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(UsageTheme.primaryText)
+                        .lineLimit(1)
+                        .help("\(window.label) · \(exactReset)")
+                    progressBar(height: 5)
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(1)
+                    percentage(minimal: true)
+                        .frame(minWidth: 34, alignment: .trailing)
+                    compactResetText
+                        .font(.system(size: 9.5, weight: .medium).monospacedDigit())
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .lineLimit(1)
+                        .frame(minWidth: 42, alignment: .trailing)
+                        .help(exactReset)
+                        .accessibilityLabel("\(window.label), \(exactReset)")
+                }
+                .frame(minHeight: 24)
+                .accessibilityElement(children: .combine)
+            case .collapsed:
+                HStack(spacing: 7) {
+                    Text(window.label).font(.system(size: 10.5, weight: .medium)).lineLimit(1)
+                    progressBar(height: 5)
+                    compactResetView
+                }
+                .foregroundStyle(UsageTheme.secondaryText)
+            }
+        }
+    }
+
+    @ViewBuilder private func metricHeading(showReset: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(window.label).font(.system(size: 12, weight: .medium)).foregroundStyle(UsageTheme.primaryText).lineLimit(1)
+            Spacer(minLength: 2)
+            if showReset { compactResetView }
+            percentage()
+        }
+    }
+
+    @ViewBuilder private func percentage(minimal: Bool = false) -> some View {
+        if let amount = window.validUtilization {
+            Text("\(Int(amount.rounded()))%")
+                .font(.system(size: minimal ? 11 : 13, weight: .semibold).monospacedDigit())
+                .foregroundStyle(usageColor)
+                .accessibilityLabel("\(Int(amount.rounded())) percent used")
+        } else {
+            Text("Unavailable").font(.system(size: 10, weight: .medium)).foregroundStyle(UsageTheme.mutedText)
+                .accessibilityLabel("Usage percentage unavailable because the source value is invalid")
+        }
+    }
+
+    @ViewBuilder private func progressBar(height: CGFloat) -> some View {
+        if let amount = window.validUtilization {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(UsageTheme.track)
+                    Capsule().fill(usageColor).frame(width: geometry.size.width * amount / 100)
                 }
             }
-            if let amount = window.validUtilization {
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(UsageTheme.track)
-                        Capsule().fill(usageColor).frame(width: geometry.size.width * amount / 100)
-                    }
-                }
-                .frame(height: 7)
-                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: amount)
-                .accessibilityElement()
-                .accessibilityLabel("\(window.label) used")
-                .accessibilityValue("\(Int(amount.rounded())) percent")
-            }
-            if let detail = window.detail {
-                Text(detail).font(.system(size: 10.5)).foregroundStyle(UsageTheme.secondaryText)
-            }
-            resetLabel
+            .frame(height: height)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: amount)
+            .accessibilityElement()
+            .accessibilityLabel("\(window.label) used")
+            .accessibilityValue("\(Int(amount.rounded())) percent")
+        } else {
+            Text("Usage unavailable")
+                .font(.system(size: 10)).foregroundStyle(UsageTheme.mutedText)
+        }
+    }
+
+    private var shortWindowLabel: String {
+        switch window.label.lowercased() {
+        case "5-hour limit": "5h"
+        case "weekly limit": "7d"
+        case "monthly limit": "30d"
+        default: window.label
+        }
+    }
+
+    private var exactReset: String {
+        guard let reset = window.resetsAt else { return "Reset time unavailable" }
+        return reset <= .now ? "Reset passed" : "Resets on \(reset.formatted(date: .abbreviated, time: .shortened))"
+    }
+
+    private var compactReset: String {
+        guard let reset = window.resetsAt else { return "—" }
+        let seconds = max(0, Int(reset.timeIntervalSinceNow))
+        guard seconds > 0 else { return "now" }
+        let days = seconds / 86_400
+        let hours = (seconds % 86_400) / 3_600
+        let minutes = (seconds % 3_600) / 60
+        if days > 0 { return hours > 0 ? "\(days)d \(hours)h" : "\(days)d" }
+        if hours > 0 { return minutes > 0 ? "\(hours)h \(minutes)m" : "\(hours)h" }
+        return "\(max(minutes, 1))m"
+    }
+
+    private var compactResetView: some View {
+        HStack(spacing: 3) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 8, weight: .medium))
+            compactResetText
+                .font(.system(size: 10, weight: .medium).monospacedDigit())
+        }
+        .foregroundStyle(window.resetsAt == nil ? UsageTheme.mutedText : UsageTheme.secondaryText)
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+        .help(exactReset)
+        .accessibilityLabel(exactReset)
+    }
+
+    private var compactResetText: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { _ in
+            Text(compactReset)
         }
     }
 
@@ -485,6 +716,7 @@ private struct UsageProgressRow: View {
                 .font(.system(size: 10.5)).foregroundStyle(UsageTheme.mutedText)
         }
     }
+
 }
 
 private struct ConnectionStatusView: View {
@@ -555,144 +787,297 @@ struct SettingsWindowView: View {
     }
 
     private func generalSettings(store: Bindable<UsageStore>) -> some View {
-        Form {
-            Section("Menu Bar") {
-                Picker("Display", selection: store.menuBarMode) {
-                    ForEach(MenuBarDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
-                }
-                Text("Combined usage uses the highest valid percentage across enabled usage windows.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Refresh") {
-                Picker("Automatic refresh", selection: store.refreshPolicy) {
-                    ForEach(RefreshPolicy.allCases) { policy in Text(policy.title).tag(policy) }
-                }
-                Text(store.wrappedValue.refreshPolicy == .manual
-                     ? "The app fetches once at startup; later refreshes require the Refresh button."
-                     : "Cached usage stays visible while providers refresh independently.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Launch") {
-                Toggle("Launch at login", isOn: Binding(
-                    get: { store.wrappedValue.launchAtLoginEnabled },
-                    set: { store.wrappedValue.setLaunchAtLogin($0) }
-                ))
-                if let error = store.wrappedValue.launchAtLoginError {
-                    Text(error).font(.caption).foregroundStyle(UsageTheme.warning)
-                }
-            }
-            Section("Visible providers") {
-                ForEach(Provider.supported) { provider in
-                    Toggle(provider.displayName, isOn: Binding(
-                        get: { store.wrappedValue.visibleProviders.contains(provider) },
-                        set: { enabled in
-                            if enabled { store.wrappedValue.visibleProviders.insert(provider) }
-                            else {
-                                store.wrappedValue.visibleProviders.remove(provider)
-                                if store.wrappedValue.selectedProvider == provider {
-                                    store.wrappedValue.selectedProvider = nil
-                                }
-                            }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsCard(title: "Menu Bar") {
+                    HStack {
+                        Text("Display")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Spacer()
+                        Picker("", selection: store.menuBarMode) {
+                            ForEach(MenuBarDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
                         }
-                    ))
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                    .padding(.bottom, 8)
+                    SettingCaption(text: "Combined usage uses the highest valid percentage across enabled usage windows.")
+                }
+                SettingsCard(title: "Refresh") {
+                    HStack {
+                        Text("Automatic refresh")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Spacer()
+                        Picker("", selection: store.refreshPolicy) {
+                            ForEach(RefreshPolicy.allCases) { policy in Text(policy.title).tag(policy) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                    .padding(.bottom, 8)
+                    SettingCaption(text: store.wrappedValue.refreshPolicy == .manual
+                        ? "The app fetches once at startup; later refreshes require the Refresh button."
+                        : "Cached usage stays visible while providers refresh independently.")
+                }
+                SettingsCard(title: "Launch") {
+                    HStack(spacing: 10) {
+                        SettingsIconTile(systemImage: "power", foreground: UsageTheme.secondaryText, background: UsageTheme.elevated)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Launch at login")
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(UsageTheme.primaryText)
+                            Text("Open AI Usage Monitor when you log in.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                        }
+                        Spacer()
+                        Toggle("Launch at login", isOn: Binding(
+                            get: { store.wrappedValue.launchAtLoginEnabled },
+                            set: { store.wrappedValue.setLaunchAtLogin($0) }
+                        ))
+                        .labelsHidden()
+                    }
+                    if let error = store.wrappedValue.launchAtLoginError {
+                        Text(error)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.warning)
+                            .padding(.top, 8)
+                    }
+                }
+                SettingsCard(title: "Visible providers") {
+                    ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
+                        if index > 0 { SettingsDivider().padding(.leading, 38) }
+                        HStack(spacing: 10) {
+                            SettingsIconTile(
+                                systemImage: provider.systemImage,
+                                foreground: UsageTheme.provider(provider),
+                                background: UsageTheme.provider(provider).opacity(0.12)
+                            )
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(provider.displayName)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(UsageTheme.primaryText)
+                                Text(providerSource(provider))
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(UsageTheme.secondaryText)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 6)
+                            ConnectionStatusView(
+                                status: store.wrappedValue.status(for: provider),
+                                isRefreshing: store.wrappedValue.refreshing.contains(provider)
+                            )
+                            Toggle(provider.displayName, isOn: Binding(
+                                get: { store.wrappedValue.visibleProviders.contains(provider) },
+                                set: { enabled in
+                                    if enabled { store.wrappedValue.visibleProviders.insert(provider) }
+                                    else {
+                                        store.wrappedValue.visibleProviders.remove(provider)
+                                        if store.wrappedValue.selectedProvider == provider {
+                                            store.wrappedValue.selectedProvider = nil
+                                        }
+                                    }
+                                }
+                            ))
+                            .labelsHidden()
+                        }
+                        .padding(.vertical, 7)
+                    }
                 }
             }
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding(18)
     }
 
     private func appearanceSettings(store: Bindable<UsageStore>) -> some View {
-        Form {
-            Section("Appearance") {
-                Picker("Color scheme", selection: store.appearance) {
-                    Text("System").tag("system")
-                    Text("Light").tag("light")
-                    Text("Dark").tag("dark")
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsCard(title: "Appearance") {
+                    HStack {
+                        Text("Color scheme")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Spacer()
+                        Picker("", selection: store.appearance) {
+                            Text("System").tag("system")
+                            Text("Light").tag("light")
+                            Text("Dark").tag("dark")
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 220)
+                    }
                 }
-                .pickerStyle(.segmented)
+                SettingsCard(title: "Usage thresholds") {
+                    ThresholdSettingRow(label: "Warning", value: store.warningThreshold, range: 50...95, color: UsageTheme.warning)
+                    SettingsDivider().padding(.vertical, 10)
+                    ThresholdSettingRow(label: "Critical", value: store.criticalThreshold, range: 70...100, color: UsageTheme.critical)
+                    SettingCaption(text: "Threshold colors apply to valid usage values in cards and the menu bar.")
+                        .padding(.top, 8)
+                }
+                UsageCardLayoutSettings()
             }
-            Section("Usage thresholds") {
-                ThresholdSettingRow(label: "Warning", value: store.warningThreshold, range: 50...95, color: UsageTheme.warning)
-                ThresholdSettingRow(label: "Critical", value: store.criticalThreshold, range: 70...100, color: UsageTheme.critical)
-                Text("Threshold colors apply to valid usage values in cards and the menu bar.")
-                    .font(.caption).foregroundStyle(.secondary)
+            .padding(20)
+        }
+        .onChange(of: store.wrappedValue.warningThreshold) {
+            if store.wrappedValue.warningThreshold >= store.wrappedValue.criticalThreshold {
+                store.wrappedValue.criticalThreshold = min(100, store.wrappedValue.warningThreshold + 5)
             }
         }
-        .formStyle(.grouped)
-        .padding(18)
+        .onChange(of: store.wrappedValue.criticalThreshold) {
+            if store.wrappedValue.criticalThreshold <= store.wrappedValue.warningThreshold {
+                store.wrappedValue.warningThreshold = max(50, store.wrappedValue.criticalThreshold - 5)
+            }
+        }
     }
 
     private var providerSettings: some View {
-        Form {
-            ForEach(Provider.supported) { provider in
-                Section(provider.displayName) {
-                    LabeledContent("Status", value: store.status(for: provider).title)
-                    if let snapshot = store.snapshots[provider] {
-                        if let account = snapshot.account { LabeledContent("Account", value: account) }
-                        if snapshot.lastSuccess != .distantPast {
-                            LabeledContent("Last successful update", value: snapshot.lastSuccess.formatted(date: .abbreviated, time: .shortened))
-                        }
-                        if let error = snapshot.error {
-                            Text(error).font(.caption).foregroundStyle(UsageTheme.warning).textSelection(.enabled)
-                        }
-                    }
-                    LabeledContent("Source", value: providerSource(provider))
-                    HStack {
-                        Text(providerHelp(provider))
-                            .font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("Refresh") { Task { await store.refresh(provider: provider) } }
-                            .disabled(store.refreshing.contains(provider))
-                    }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach(Provider.supported) { provider in
+                    providerCard(provider)
                 }
+                cursorSessionCard
+                CopilotSessionCard()
+                openCodeSessionCard
             }
-            Section("Cursor session") {
-                Text("AI Usage Monitor reads Cursor.app's signed-in session locally and calls Cursor's usage summary. If that session is unavailable, you can supply a cursor.com session cookie as a fallback.")
-                    .font(.caption).foregroundStyle(.secondary)
-                SecureField("Optional cursor.com Cookie header", text: $cursorCookieHeader)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Label(cursorHasStoredCookie ? "Fallback cookie stored in macOS Keychain" : "Using Cursor.app session when available", systemImage: cursorHasStoredCookie ? "checkmark.shield" : "desktopcomputer")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Link("CodexBar Cursor source", destination: URL(string: "https://github.com/steipete/CodexBar/blob/main/docs/cursor.md")!)
-                    Button("Save cookie & refresh") { saveCursorCredentials() }
-                        .disabled(cursorCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    if cursorHasStoredCookie {
-                        Button("Remove cookie", role: .destructive) { removeCursorCredentials() }
-                    }
-                }
-                if let cursorCredentialMessage {
-                    Text(cursorCredentialMessage).font(.caption).foregroundStyle(UsageTheme.secondaryText)
-                }
-                Text("Cursor's usage-summary endpoint is undocumented and may change. The billing-cycle end is shown when returned. Never paste a cookie into logs or screenshots.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("OpenCode session") {
-                Text("OpenCode usage comes from its authenticated dashboard. Paste the Cookie header from an OpenCode browser session; the app keeps only OpenCode auth cookies in macOS Keychain.")
-                    .font(.caption).foregroundStyle(.secondary)
-                SecureField("OpenCode Cookie header", text: $openCodeCookieHeader)
-                    .textFieldStyle(.roundedBorder)
-                HStack {
-                    Label(openCodeHasStoredCookie ? "Session cookie stored in macOS Keychain" : "No OpenCode session connected", systemImage: openCodeHasStoredCookie ? "checkmark.shield" : "key")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Save cookie & refresh") { saveOpenCodeCredentials() }
-                        .disabled(openCodeCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    if openCodeHasStoredCookie {
-                        Button("Remove cookie", role: .destructive) { removeOpenCodeCredentials() }
-                    }
-                }
-                if let openCodeCredentialMessage {
-                    Text(openCodeCredentialMessage).font(.caption).foregroundStyle(UsageTheme.secondaryText)
-                }
-                Text("OpenCode's dashboard API is undocumented and may change. Session cookies expire; never paste them into logs or screenshots.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
+            .padding(20)
         }
-        .formStyle(.grouped)
-        .padding(18)
+    }
+
+    private func providerCard(_ provider: Provider) -> some View {
+        SettingsCard(title: provider.displayName) {
+            HStack(spacing: 10) {
+                SettingsIconTile(
+                    systemImage: provider.systemImage,
+                    foreground: UsageTheme.provider(provider),
+                    background: UsageTheme.provider(provider).opacity(0.12)
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(provider.displayName)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(UsageTheme.primaryText)
+                    if let account = store.snapshots[provider]?.account {
+                        Text(account)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                Spacer(minLength: 6)
+                ConnectionStatusView(
+                    status: store.status(for: provider),
+                    isRefreshing: store.refreshing.contains(provider)
+                )
+                Button { Task { await store.refresh(provider: provider) } } label: {
+                    Group {
+                        if store.refreshing.contains(provider) { ProgressView().controlSize(.small) }
+                        else { Image(systemName: "arrow.clockwise") }
+                    }
+                    .frame(width: 30, height: 30)
+                }
+                .buttonStyle(QuietIconButtonStyle())
+                .help("Refresh \(provider.displayName) now")
+                .disabled(store.refreshing.contains(provider))
+            }
+            .padding(.bottom, 4)
+            SettingsDivider()
+            SettingsDetailRow(label: "Status", value: store.status(for: provider).title)
+            if let snapshot = store.snapshots[provider] {
+                if let account = snapshot.account {
+                    SettingsDivider()
+                    SettingsDetailRow(label: "Account", value: account)
+                }
+                if snapshot.lastSuccess != .distantPast {
+                    SettingsDivider()
+                    SettingsDetailRow(
+                        label: "Last successful update",
+                        value: snapshot.lastSuccess.formatted(date: .abbreviated, time: .shortened)
+                    )
+                }
+                if let error = snapshot.error {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsageTheme.warning)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                }
+            }
+            SettingsDivider()
+            SettingsDetailRow(label: "Source", value: providerSource(provider))
+            SettingCaption(text: providerHelp(provider))
+                .padding(.top, 8)
+        }
+    }
+
+    private var cursorSessionCard: some View {
+        SettingsCard(title: "Cursor session") {
+            SettingCaption(text: "AI Usage Monitor reads Cursor.app's signed-in session locally and calls Cursor's usage summary. If that session is unavailable, you can supply a cursor.com session cookie as a fallback.")
+            SecureField("Optional cursor.com Cookie header", text: $cursorCookieHeader)
+                .textFieldStyle(.roundedBorder)
+                .padding(.vertical, 6)
+            HStack {
+                Label(cursorHasStoredCookie ? "Fallback cookie stored in macOS Keychain" : "Using Cursor.app session when available", systemImage: cursorHasStoredCookie ? "checkmark.shield" : "desktopcomputer")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                Spacer()
+                Link("CodexBar Cursor source", destination: URL(string: "https://github.com/steipete/CodexBar/blob/main/docs/cursor.md")!)
+                    .font(.system(size: 11))
+                Button("Save cookie & refresh") { saveCursorCredentials() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(cursorCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if cursorHasStoredCookie {
+                    Button("Remove cookie", role: .destructive) { removeCursorCredentials() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            if let cursorCredentialMessage {
+                Text(cursorCredentialMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .padding(.top, 6)
+            }
+            SettingCaption(text: "Cursor's usage-summary endpoint is undocumented and may change. The billing-cycle end is shown when returned. Never paste a cookie into logs or screenshots.")
+                .padding(.top, 6)
+        }
+    }
+
+    private var openCodeSessionCard: some View {
+        SettingsCard(title: "OpenCode session") {
+            SettingCaption(text: "OpenCode usage comes from its authenticated dashboard. Paste the Cookie header from an OpenCode browser session; the app keeps only OpenCode auth cookies in macOS Keychain.")
+            SecureField("OpenCode Cookie header", text: $openCodeCookieHeader)
+                .textFieldStyle(.roundedBorder)
+                .padding(.vertical, 6)
+            HStack {
+                Label(openCodeHasStoredCookie ? "Session cookie stored in macOS Keychain" : "No OpenCode session connected", systemImage: openCodeHasStoredCookie ? "checkmark.shield" : "key")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                Spacer()
+                Button("Save cookie & refresh") { saveOpenCodeCredentials() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(openCodeCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if openCodeHasStoredCookie {
+                    Button("Remove cookie", role: .destructive) { removeOpenCodeCredentials() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            if let openCodeCredentialMessage {
+                Text(openCodeCredentialMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .padding(.top, 6)
+            }
+            SettingCaption(text: "OpenCode's dashboard API is undocumented and may change. Session cookies expire; never paste them into logs or screenshots.")
+                .padding(.top, 6)
+        }
     }
 
     private func providerSource(_ provider: Provider) -> String {
@@ -700,6 +1085,7 @@ struct SettingsWindowView: View {
         case .claude: "Claude Code OAuth usage"
         case .codex: "Local Codex app-server"
         case .cursor: "Cursor session · usage-summary web API"
+        case .copilot: "GitHub OAuth · Copilot usage API"
         case .openCode: "OpenCode dashboard session · web API"
         default: "Not integrated"
         }
@@ -710,6 +1096,7 @@ struct SettingsWindowView: View {
         case .claude: "Sign in with Claude Code to refresh. Credentials are read-only and never shown here."
         case .codex: "Sign in with Codex CLI or the ChatGPT app. AI Usage Monitor does not read Codex auth files."
         case .cursor: "Cursor.app authentication is read-only. An optional web session cookie is stored in Keychain."
+        case .copilot: "Connect your GitHub account using device authorization. The token is stored in Keychain."
         case .openCode: "Add an OpenCode dashboard cookie in Settings. The session is stored in Keychain."
         default: "Usage tracking is not integrated for this provider."
         }
@@ -754,20 +1141,343 @@ struct SettingsWindowView: View {
     }
 
     private var aboutSettings: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Image(systemName: "chart.bar.fill").font(.system(size: 30)).foregroundStyle(UsageTheme.secondaryText)
-            Text("AI Usage Monitor").font(.title2.weight(.semibold))
-            Text("A native menu bar utility for Claude Code, Codex, Cursor, and OpenCode usage.")
-                .foregroundStyle(UsageTheme.secondaryText)
-            Divider().overlay(UsageTheme.separator)
-            Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor and OpenCode usage use their session-authenticated web APIs. Provider interfaces can change.")
-                .font(.callout).foregroundStyle(UsageTheme.secondaryText)
-            Text("UI and integration references are MIT licensed: claude-usage-widget by bozdemir and codex-usage-bar by CMMUU.")
-                .font(.caption).foregroundStyle(UsageTheme.mutedText)
-            Spacer()
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                SettingsCard(title: nil) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "chart.bar.fill")
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .frame(width: 34, height: 34)
+                            .background(UsageTheme.elevated, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("AI Usage Monitor")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(UsageTheme.primaryText)
+                            Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, and OpenCode usage.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                        }
+                    }
+                    .padding(.bottom, 4)
+                    SettingsDivider()
+                    Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, and OpenCode usage use their session-authenticated web APIs. Provider interfaces can change.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.vertical, 8)
+                    SettingsDivider()
+                    Text("UI and integration references are MIT licensed: claude-usage-widget by bozdemir and codex-usage-bar by CMMUU.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsageTheme.mutedText)
+                        .padding(.top, 8)
+                }
+            }
+            .padding(20)
         }
-        .padding(28)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct UsageCardLayoutSettings: View {
+    @AppStorage("overviewCardLayout") private var overviewRaw = UsageCardLayout.twoColumns.rawValue
+    @AppStorage("detailCardLayout") private var detailRaw = UsageCardLayout.compactBalanced.rawValue
+    @AppStorage("useUnifiedCardLayout") private var useUnifiedLayout = false
+    @AppStorage("collapsibleInitiallyExpanded") private var initiallyExpanded = false
+
+    private var overviewSelection: Binding<UsageCardLayout> {
+        Binding(get: { UsageCardLayout.preference(overviewRaw, fallback: .twoColumns) }, set: { overviewRaw = $0.rawValue })
+    }
+    private var detailSelection: Binding<UsageCardLayout> {
+        Binding(get: { UsageCardLayout.preference(detailRaw, fallback: .compactBalanced) }, set: { detailRaw = $0.rawValue })
+    }
+
+    var body: some View {
+        SettingsCard(title: "Usage Card Layout") {
+            Text("Overview Layout")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(UsageTheme.primaryText)
+            layoutGrid(selection: overviewSelection)
+            SettingsDivider().padding(.vertical, 2)
+            Text("Provider Detail Layout")
+                .font(.system(size: 12, weight: .semibold)).foregroundStyle(UsageTheme.primaryText)
+            layoutGrid(selection: detailSelection).disabled(useUnifiedLayout)
+            if useUnifiedLayout {
+                SettingCaption(text: "Overview Layout is used for both Overview and Provider Detail.")
+            }
+            Toggle("Use the same layout everywhere", isOn: $useUnifiedLayout)
+                .font(.system(size: 12, weight: .medium))
+                .toggleStyle(.checkbox)
+            Toggle("Start collapsible cards expanded", isOn: $initiallyExpanded)
+                .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                .toggleStyle(.checkbox)
+                .disabled(overviewSelection.wrappedValue != .collapsible && detailSelection.wrappedValue != .collapsible)
+        }
+    }
+
+    private func layoutGrid(selection: Binding<UsageCardLayout>) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) {
+            ForEach(UsageCardLayout.allCases) { layout in
+                UsageCardLayoutChoice(layout: layout, isSelected: selection.wrappedValue == layout) {
+                    selection.wrappedValue = layout
+                }
+            }
+        }
+    }
+}
+
+private struct UsageCardLayoutChoice: View {
+    let layout: UsageCardLayout
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 7) {
+                UsageCardLayoutPreview(layout: layout)
+                    .frame(height: 48)
+                    .frame(maxWidth: .infinity)
+                    .background(UsageTheme.background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                HStack(spacing: 5) {
+                    Text(layout.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if isSelected { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(UsageTheme.codex) }
+                }
+                Text(layout.subtitle).font(.system(size: 9.5)).foregroundStyle(UsageTheme.secondaryText).lineLimit(1)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isSelected ? UsageTheme.codex.opacity(0.08) : UsageTheme.elevated.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(isSelected ? UsageTheme.codex.opacity(0.55) : UsageTheme.separator, lineWidth: isSelected ? 1 : 0.7))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(layout.title), \(layout.subtitle)")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct UsageCardLayoutPreview: View {
+    let layout: UsageCardLayout
+    private let accent = UsageTheme.codex
+
+    var body: some View {
+        VStack(spacing: 4) {
+            switch layout {
+            case .compactBalanced:
+                previewMetric(label: "5-hour limit", width: 0.38, horizontal: false)
+                previewMetric(label: "Weekly limit", width: 0.2, horizontal: false)
+            case .twoColumns:
+                HStack(spacing: 5) {
+                    tileMetric(label: "5-hour", width: 0.38)
+                    tileMetric(label: "Weekly", width: 0.2)
+                }
+            case .minimalRows:
+                previewMetric(label: "5h", width: 0.38, horizontal: true)
+                previewMetric(label: "7d", width: 0.2, horizontal: true)
+            case .collapsible:
+                HStack(spacing: 4) {
+                    Circle().fill(accent).frame(width: 5, height: 5)
+                    Text("Codex · Plus").font(.system(size: 8, weight: .medium))
+                    Spacer()
+                    Text("10%").font(.system(size: 8, weight: .semibold).monospacedDigit())
+                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold))
+                }
+                previewBar(width: 0.38)
+            }
+        }
+        .padding(.horizontal, 7)
+        .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func previewMetric(label: String, width: CGFloat, horizontal: Bool) -> some View {
+        if horizontal {
+            HStack(spacing: 4) {
+                Text(label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
+                previewBar(width: width)
+                Spacer(minLength: 2)
+                Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7.5, weight: .semibold).monospacedDigit())
+            }
+        } else {
+            VStack(spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7.5, weight: .semibold).monospacedDigit())
+                }
+                previewBar(width: width)
+            }
+        }
+    }
+
+    private func tileMetric(label: String, width: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack { Text(label).font(.system(size: 7.5, weight: .medium)); Spacer(); Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7, weight: .semibold)) }
+            previewBar(width: width)
+        }
+        .padding(4)
+        .frame(maxWidth: .infinity)
+        .background(UsageTheme.elevated, in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    private func previewBar(width: CGFloat) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(UsageTheme.track)
+                Capsule().fill(accent).frame(width: proxy.size.width * width)
+            }
+        }
+        .frame(height: 4)
+    }
+}
+
+private struct CopilotSessionCard: View {
+    @Environment(UsageStore.self) private var store
+    @Environment(\.openURL) private var openURL
+    @State private var status: String?
+    @State private var userCode: String?
+    @State private var signInTask: Task<Void, Never>?
+    @State private var hasToken = CopilotCredentialVault.hasToken
+
+    var body: some View {
+        SettingsCard(title: "GitHub Copilot") {
+            SettingCaption(text: "Connect with GitHub's public OAuth device flow. The access token is stored in macOS Keychain and used to read Copilot quota.")
+            if let userCode {
+                Text("Enter code \(userCode) at github.com/login/device")
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .textSelection(.enabled)
+                HStack {
+                    Link("Open GitHub device login", destination: URL(string: "https://github.com/login/device")!)
+                    Spacer()
+                    Button("Cancel sign in", role: .cancel) { cancelSignIn() }
+                }
+            }
+            HStack {
+                Label(hasToken ? "GitHub token stored in macOS Keychain" : "Not connected", systemImage: hasToken ? "checkmark.shield" : "key")
+                    .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                Spacer()
+                if hasToken {
+                    Button("Disconnect", role: .destructive) { disconnect() }.buttonStyle(.bordered).controlSize(.small)
+                } else {
+                    Button(userCode == nil ? "Connect GitHub" : "Waiting for authorization…") { beginSignIn() }
+                        .buttonStyle(.bordered).controlSize(.small).disabled(signInTask != nil)
+                }
+            }
+            if let status { Text(status).font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText).padding(.top, 4) }
+            SettingCaption(text: "Quota data comes from GitHub's undocumented Copilot usage API; available quota types depend on your plan.").padding(.top, 5)
+        }
+    }
+
+    private func beginSignIn() {
+        status = "Requesting a GitHub device code…"
+        signInTask = Task {
+            do {
+                let flow = CopilotDeviceFlow()
+                let code = try await flow.requestCode()
+                guard !Task.isCancelled else { return }
+                userCode = code.userCode
+                status = "Waiting for GitHub authorization…"
+                if let url = URL(string: code.verificationUri) { openURL(url) }
+                let token = try await flow.poll(code)
+                try CopilotCredentialVault.save(token: token)
+                hasToken = true
+                userCode = nil
+                status = "Connected. Fetching Copilot usage…"
+                await store.refresh(provider: .copilot)
+                signInTask = nil
+            } catch is CancellationError {
+                signInTask = nil
+            } catch {
+                signInTask = nil
+                userCode = nil
+                status = error.localizedDescription
+            }
+        }
+    }
+
+    private func cancelSignIn() {
+        signInTask?.cancel()
+        signInTask = nil
+        userCode = nil
+        status = "Sign in cancelled."
+    }
+
+    private func disconnect() {
+        cancelSignIn()
+        CopilotCredentialVault.delete()
+        hasToken = false
+        status = "GitHub Copilot disconnected."
+    }
+}
+
+private struct SettingsCard<Content: View>: View {
+    let title: String?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let title {
+                Text(title.uppercased())
+                    .font(.system(size: 11, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .padding(.leading, 2)
+            }
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .padding(15)
+            .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(UsageTheme.separator.opacity(0.8), lineWidth: 0.7))
+        }
+    }
+}
+
+private struct SettingsDivider: View {
+    var body: some View {
+        Rectangle().fill(UsageTheme.separator).frame(height: 1)
+    }
+}
+
+private struct SettingCaption: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(UsageTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct SettingsIconTile: View {
+    let systemImage: String
+    let foreground: Color
+    let background: Color
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(foreground)
+            .frame(width: 28, height: 28)
+            .background(background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct SettingsDetailRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(UsageTheme.secondaryText)
+            Spacer()
+            Text(value)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(UsageTheme.primaryText)
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.vertical, 5)
     }
 }
 
@@ -778,10 +1488,22 @@ private struct ThresholdSettingRow: View {
     let color: Color
 
     var body: some View {
-        HStack {
-            Text(label).frame(width: 80, alignment: .leading)
-            Slider(value: $value, in: range, step: 5).tint(color)
-            Text("\(Int(value))%").monospacedDigit().frame(width: 45, alignment: .trailing)
+        HStack(spacing: 10) {
+            Text(label)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(UsageTheme.primaryText)
+                .frame(width: 80, alignment: .leading)
+            Slider(value: $value, in: range, step: 5)
+                .tint(color)
+            Text("\(Int(value))%")
+                .font(.system(size: 11, weight: .semibold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(color))
+                .frame(minWidth: 52)
+                .help("\(label) threshold")
         }
+        .padding(.vertical, 2)
     }
 }

@@ -61,6 +61,15 @@ private struct FixtureProvider: UsageProvider {
 }
 
 final class ProviderAndStoreTests: XCTestCase {
+    func testUsageCardLayoutDefaultsAndUnknownPreferenceFallback() throws {
+        XCTAssertEqual(UsageCardLayout.preference("twoColumns", fallback: .compactBalanced), .twoColumns)
+        XCTAssertEqual(UsageCardLayout.preference("obsolete-layout", fallback: .twoColumns), .twoColumns)
+        XCTAssertEqual(UsageCardLayout.allCases, [.compactBalanced, .twoColumns, .minimalRows, .collapsible])
+
+        let encoded = try JSONEncoder().encode(UsageCardLayout.collapsible)
+        XCTAssertEqual(try JSONDecoder().decode(UsageCardLayout.self, from: encoded), .collapsible)
+    }
+
     func testClaudeRetries429OnlyWhenRetryAfterIsPositive() async throws {
         let body = Data(#"{"five_hour":{"utilization":25}}"#.utf8)
         let loader = FixtureHTTPDataLoader([
@@ -248,7 +257,7 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(Provider.allCases.map(\.shortName), [
             "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Windsurf", "Cline", "Roo", "OpenCode"
         ])
-        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor])
+        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .openCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }

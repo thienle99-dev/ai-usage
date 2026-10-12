@@ -161,7 +161,153 @@ struct CodexProvider: UsageProvider {
 
     func fetch() async throws -> UsageSnapshot {
         let parsed = try UsageParsing.codex(await source.read())
-        return UsageSnapshot(provider: .codex, windows: parsed.windows, account: parsed.account, lastSuccess: .now)
+        return UsageSnapshot(provider: .codex, windows: parsed.windows, account: parsed.account, accountID: parsed.accountID, lastSuccess: .now)
+    }
+}
+
+struct CopilotProvider: UsageProvider {
+    let provider = Provider.copilot
+    private let loader: any HTTPDataLoading
+    private let tokenProvider: @Sendable () throws -> String
+
+    init(loader: any HTTPDataLoading = URLSessionDataLoader(), tokenProvider: @escaping @Sendable () throws -> String = { try CopilotCredentialVault.accessToken() }) {
+        self.loader = loader
+        self.tokenProvider = tokenProvider
+    }
+
+    func fetch() async throws -> UsageSnapshot {
+        let token = try tokenProvider()
+        var request = URLRequest(url: URL(string: "https://api.github.com/copilot_internal/user")!)
+        request.httpMethod = "GET"
+        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("vscode/1.96.2", forHTTPHeaderField: "Editor-Version")
+        request.setValue("copilot-chat/0.26.7", forHTTPHeaderField: "Editor-Plugin-Version")
+        request.setValue("GitHubCopilotChat/0.26.7", forHTTPHeaderField: "User-Agent")
+        request.setValue("2025-04-01", forHTTPHeaderField: "X-Github-Api-Version")
+        request.timeoutInterval = 20
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await loader.data(for: request) }
+        catch { throw ProviderFailure.network("Could not reach GitHub Copilot. Check your network and try again.") }
+        guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("No HTTP response from GitHub Copilot.") }
+        guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
+        let windows = try CopilotParsing.windows(data)
+        let account = await fetchAccount(token: token)
+        return UsageSnapshot(provider: .copilot, windows: windows, account: account, lastSuccess: .now)
+    }
+
+    private func fetchAccount(token: String) async -> String? {
+        var request = URLRequest(url: URL(string: "https://api.github.com/user")!)
+        request.setValue("token \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, response) = try? await loader.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return root["login"] as? String
+    }
+}
+
+enum CopilotParsing {
+    static func windows(_ data: Data) throws -> [UsageWindow] {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ProviderFailure.invalidResponse("GitHub Copilot returned malformed usage data.")
+        }
+        let snapshots = (root["quota_snapshots"] ?? root["quotaSnapshots"]) as? [String: Any] ?? [:]
+        let reset = date(root["quota_reset_date"] ?? root["quotaResetDate"])
+        var windows: [UsageWindow] = []
+        for (key, label) in [("premium_interactions", "Premium"), ("premiumInteractions", "Premium"), ("chat", "Chat")] {
+            guard let item = snapshots[key] as? [String: Any], item["unlimited"] as? Bool != true,
+                  let remainingPercent = percentRemaining(item), (0...100).contains(remainingPercent) else { continue }
+            if windows.contains(where: { $0.label == label }) { continue }
+            windows.append(UsageWindow(label: label, utilization: 100 - remainingPercent, resetsAt: reset))
+        }
+        guard !windows.isEmpty else {
+            let plan = (root["copilot_plan"] ?? root["copilotPlan"]) as? String
+            if plan != nil || !snapshots.isEmpty { return [] }
+            throw ProviderFailure.invalidResponse("GitHub Copilot returned no recognized quota data.")
+        }
+        return windows
+    }
+
+    private static func number(_ value: Any?) -> Double? {
+        if let value = value as? NSNumber { return value.doubleValue }
+        if let value = value as? String { return Double(value) }
+        return nil
+    }
+    private static func percentRemaining(_ item: [String: Any]) -> Double? {
+        if let percent = number(item["percent_remaining"] ?? item["percentRemaining"]) { return percent }
+        guard let remaining = number(item["remaining"]), let entitlement = number(item["entitlement"] ?? item["quota"]), entitlement > 0 else { return nil }
+        return min(100, max(0, remaining / entitlement * 100))
+    }
+    private static func date(_ value: Any?) -> Date? {
+        guard let value = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        return formatter.date(from: value)
+    }
+}
+
+enum CopilotCredentialVault {
+    private static let service = "com.aiusagemonitor.github-copilot"
+    private static let account = "oauth-access-token"
+    static var hasToken: Bool { read() != nil }
+    static func save(token: String) throws {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        let value: [String: Any] = [kSecValueData as String: Data(token.utf8)]
+        let status = SecItemUpdate(query as CFDictionary, value as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = query; insert[kSecValueData as String] = Data(token.utf8)
+            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else { throw ProviderFailure.credentials("Could not save the GitHub token in Keychain.") }
+        } else if status != errSecSuccess { throw ProviderFailure.credentials("Could not update the GitHub token in Keychain.") }
+    }
+    static func delete() {
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
+    }
+    static func accessToken() throws -> String {
+        guard let token = read() else { throw ProviderFailure.credentials("Connect GitHub Copilot in Settings to refresh usage.") }
+        return token
+    }
+    private static func read() -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+struct CopilotDeviceFlow {
+    private let clientID = "Iv1.b507a08c87ecfe98"
+    private let loader: any HTTPDataLoading
+    init(loader: any HTTPDataLoading = URLSessionDataLoader()) { self.loader = loader }
+    struct DeviceCode: Decodable { let deviceCode: String; let userCode: String; let verificationUri: String; let expiresIn: Int; let interval: Int
+        enum CodingKeys: String, CodingKey { case deviceCode = "device_code", userCode = "user_code", verificationUri = "verification_uri", expiresIn = "expires_in", interval }
+    }
+    func requestCode() async throws -> DeviceCode {
+        var request = URLRequest(url: URL(string: "https://github.com/login/device/code")!)
+        request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Accept"); request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = "client_id=\(clientID)&scope=read%3Auser".data(using: .utf8)
+        let (data, response) = try await loader.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw ProviderFailure.http((response as? HTTPURLResponse)?.statusCode ?? 0) }
+        return try JSONDecoder().decode(DeviceCode.self, from: data)
+    }
+    func poll(_ code: DeviceCode) async throws -> String {
+        let deadline = Date.now.addingTimeInterval(TimeInterval(code.expiresIn)); var interval = max(1, code.interval)
+        while Date.now < deadline {
+            try Task.checkCancellation(); try await Task.sleep(for: .seconds(interval))
+            var request = URLRequest(url: URL(string: "https://github.com/login/oauth/access_token")!)
+            request.httpMethod = "POST"; request.setValue("application/json", forHTTPHeaderField: "Accept"); request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+            request.httpBody = "client_id=\(clientID)&device_code=\(code.deviceCode.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? code.deviceCode)&grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Adevice_code".data(using: .utf8)
+            let (data, _) = try await loader.data(for: request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+            if let token = json["access_token"] as? String { return token }
+            switch json["error"] as? String {
+            case "authorization_pending": continue
+            case "slow_down": interval += 5
+            case "expired_token": throw ProviderFailure.credentials("GitHub sign-in code expired. Try again.")
+            default: throw ProviderFailure.credentials("GitHub sign-in was denied or could not be completed.")
+            }
+        }
+        throw ProviderFailure.credentials("GitHub sign-in code expired. Try again.")
     }
 }
 
