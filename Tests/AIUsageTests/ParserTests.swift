@@ -1,0 +1,49 @@
+import XCTest
+@testable import AIUsage
+
+final class ParserTests: XCTestCase {
+    func testClaudeWindowsAndBounds() throws {
+        let data = Data(#"{"five_hour":{"utilization":120,"resets_at":"2026-10-12T12:00:00Z"},"seven_day":{"utilization":-4}}"#.utf8)
+        let windows = try UsageParsing.claude(data)
+        XCTAssertEqual(windows.count, 2)
+        XCTAssertEqual(windows[0].utilization, 100)
+        XCTAssertEqual(windows[1].utilization, 0)
+        XCTAssertNotNil(windows[0].resetsAt)
+    }
+
+    func testClaudeWrappedAndStatusLinePayloads() throws {
+        let wrapped = Data(#"{"utilization":{"five_hour":{"utilization":35,"resets_at":"2026-10-12T12:00:00Z"},"seven_day":{"utilization":61}}}"#.utf8)
+        XCTAssertEqual(try UsageParsing.claude(wrapped).map(\.utilization), [35, 61])
+        let statusLine = Data(#"{"rate_limits":{"five_hour":{"used_percentage":27,"resets_at":1791806400}}}"#.utf8)
+        let window = try XCTUnwrap(UsageParsing.claude(statusLine).first)
+        XCTAssertEqual(window.utilization, 27)
+        XCTAssertNotNil(window.resetsAt)
+    }
+
+    func testCodexDurationSelection() throws {
+        let data = Data(#"{"result":{"email":"a@example.com","rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300},"secondary":{"usedPercent":60,"windowDurationMins":10080}}}}"#.utf8)
+        let result = try UsageParsing.codex(data)
+        XCTAssertEqual(result.windows.map(\.label), ["Session", "Weekly"])
+        XCTAssertEqual(result.account, "a@example.com")
+    }
+
+    func testCodexNestedRateLimitsResponse() throws {
+        let data = Data(#"{"id":3,"result":{"rateLimits":{"rateLimits":{"primary":{"usedPercent":19,"windowDurationMins":300,"resetsAt":1791806400},"secondary":{"usedPercent":48,"windowDurationMins":10080,"resetsAt":1792152000}},"rateLimitsByLimitId":{}}}}"#.utf8)
+        let result = try UsageParsing.codex(data)
+        XCTAssertEqual(result.windows.map(\.label), ["Session", "Weekly"])
+        XCTAssertEqual(result.windows.map(\.utilization), [19, 48])
+        XCTAssertNotNil(result.windows[1].resetsAt)
+    }
+
+    func testMalformedAndMissingUsageFailClearly() {
+        XCTAssertThrowsError(try UsageParsing.claude(Data("bad".utf8)))
+        XCTAssertThrowsError(try UsageParsing.claude(Data("{}".utf8)))
+        XCTAssertThrowsError(try UsageParsing.codex(Data("{}".utf8)))
+    }
+
+    func testHTTPFailureDescriptions() {
+        XCTAssertEqual(ProviderFailure.http(429).errorDescription, "Rate limited. Try again later.")
+        XCTAssertEqual(ProviderFailure.http(401).errorDescription, "Authentication expired or access was denied.")
+        XCTAssertEqual(ProviderFailure.http(503).errorDescription, "Service returned HTTP 503.")
+    }
+}
