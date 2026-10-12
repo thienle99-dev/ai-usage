@@ -294,10 +294,19 @@ struct GeneralSettingsView: View {
     @State private var claudePaneError: String?
     @State private var claudePaneWorking = false
     @State private var showingClaudeHandoff = false
+    @State private var claudeResponseModesError: String?
+    @State private var rtkClaudeState: RTKClaudeManager.State = .rtkNotFound
+    @State private var rtkClaudeError: String?
+    @State private var rtkClaudeWorking = false
+    @State private var contextModeState: ContextModeManager.State = .notInstalled
+    @State private var contextModeError: String?
+    @State private var contextModeWorking = false
     @AppStorage("contextWarningsEnabled") private var contextWarningsEnabled = true
     @AppStorage("contextWarningThreshold") private var contextWarningThreshold = 80.0
     @AppStorage("promptCacheWarningsEnabled") private var promptCacheWarningsEnabled = true
     @AppStorage(ClaudeProgressHandoff.optInKey) private var claudeProgressHandoffEnabled = false
+    @AppStorage("claudeTokenSaverEnabled") private var claudeTokenSaverEnabled = false
+    @AppStorage("claudeBeginnerModeEnabled") private var claudeBeginnerModeEnabled = false
 
     var body: some View {
         SettingsPage(title: "General", subtitle: "Configure your AI usage monitor.") {
@@ -370,6 +379,82 @@ struct GeneralSettingsView: View {
                     SettingsErrorText(text: claudeStatusLineError)
                         .padding(.vertical, 4)
                 }
+                SettingsRowDivider()
+                HStack(spacing: 10) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .font(.system(size: 16))
+                        .foregroundStyle(UsageTheme.claude)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("RTK command filter")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Text(rtkClaudeDescription)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    Button(rtkClaudeButtonTitle) {
+                        manageRTKClaude()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(rtkClaudeWorking || rtkClaudeButtonDisabled)
+                }
+                .padding(.vertical, 7)
+                .frame(minHeight: 44)
+                if let rtkClaudeError {
+                    SettingsRowDivider()
+                    SettingsErrorText(text: rtkClaudeError)
+                        .padding(.vertical, 4)
+                }
+            }
+            SettingsSection(title: "RTK Integrations") {
+                RTKAgentSettingsRow(agent: .codex)
+                SettingsRowDivider()
+                RTKAgentSettingsRow(agent: .gemini)
+                Text("RTK shortens supported terminal command output for the selected agent. It does not reduce every model request or change provider quota. Install the RTK CLI separately.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 7)
+            }
+            SettingsSection(title: "Claude Code Context Mode") {
+                HStack(spacing: 10) {
+                    Image(systemName: "text.alignleft")
+                        .font(.system(size: 16))
+                        .foregroundStyle(UsageTheme.claude)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Context Mode")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Text(contextModeDescription)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    Button(contextModeButtonTitle) {
+                        manageContextMode()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(contextModeWorking || contextModeButtonDisabled)
+                }
+                .padding(.vertical, 7)
+                .frame(minHeight: 44)
+                Text("Context Mode stores local session and index data. Its ctx_execute tool runs code with the filesystem permissions of Claude Code. AI Usage Monitor does not read that data or enable plugin settings automatically.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 5)
+                if let contextModeError {
+                    SettingsRowDivider()
+                    SettingsErrorText(text: contextModeError)
+                        .padding(.vertical, 4)
+                }
             }
             SettingsSection(title: "Claude Code Side Pane") {
                 HStack(spacing: 10) {
@@ -423,6 +508,34 @@ struct GeneralSettingsView: View {
                             .controlSize(.small)
                     }
                     .padding(.vertical, 7)
+                }
+            }
+            SettingsSection(title: "Claude Code Response Modes") {
+                SettingsToggleRow(
+                    icon: "text.alignleft",
+                    iconColor: UsageTheme.claude,
+                    title: "Token Saver",
+                    description: "Prefer concise answers, avoid repetition, and use only necessary examples. Instructions are added to Claude prompts and may use some input tokens.",
+                    isOn: $claudeTokenSaverEnabled
+                )
+                SettingsRowDivider()
+                SettingsToggleRow(
+                    icon: "lightbulb",
+                    iconColor: UsageTheme.claude,
+                    title: "Beginner Mode",
+                    description: "Explain unfamiliar technical terms in plain language and add a brief example when helpful. Instructions are added to Claude prompts and may use some input tokens.",
+                    isOn: $claudeBeginnerModeEnabled
+                )
+                SettingsRowDivider()
+                Text("Applies to Claude Code sessions with the AI Usage Monitor plugin installed. Changes apply to the next prompt; the plugin reads these local preferences and makes no extra model request.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 7)
+                if let claudeResponseModesError {
+                    SettingsRowDivider()
+                    SettingsErrorText(text: claudeResponseModesError)
+                        .padding(.vertical, 4)
                 }
             }
             SettingsSection(title: "Context & Cache Warnings") {
@@ -535,7 +648,12 @@ struct GeneralSettingsView: View {
         .onAppear {
             refreshClaudeStatusLineState()
             refreshClaudePaneState()
+            refreshRTKClaudeState()
+            refreshContextModeState()
+            syncClaudeResponseModes()
         }
+        .onChange(of: claudeTokenSaverEnabled) { _, _ in syncClaudeResponseModes() }
+        .onChange(of: claudeBeginnerModeEnabled) { _, _ in syncClaudeResponseModes() }
         .sheet(isPresented: $showingClaudeHandoff) {
             ClaudeProgressHandoffSheet()
                 .frame(minWidth: 560, minHeight: 460)
@@ -595,6 +713,130 @@ struct GeneralSettingsView: View {
         refreshClaudeStatusLineState()
     }
 
+    private var rtkClaudeDescription: String {
+        switch rtkClaudeState {
+        case .rtkNotFound:
+            "RTK CLI not found. Install the binary separately; this app only manages its Claude Code hook."
+        case .notInstalled(let version):
+            "RTK \(version) is ready. Adds a Bash command hook only; restart Claude Code after setup."
+        case .installed(let version):
+            "RTK \(version) filters Claude Code Bash output. Built-in Read, Grep, and Glob tools are unaffected; restart Claude Code after changes."
+        case .unmanagedInstallation(let version):
+            "RTK \(version) or RTK.md is already configured outside this app. AI Usage Monitor will leave it untouched."
+        case .unavailable(let reason):
+            reason
+        }
+    }
+
+    private var rtkClaudeButtonTitle: String {
+        switch rtkClaudeState {
+        case .rtkNotFound: "Get RTK"
+        case .notInstalled: "Install"
+        case .installed: "Remove"
+        case .unmanagedInstallation: "Installed"
+        case .unavailable: "Retry"
+        }
+    }
+
+    private var rtkClaudeButtonDisabled: Bool {
+        switch rtkClaudeState {
+        case .unmanagedInstallation, .unavailable: true
+        default: false
+        }
+    }
+
+    private func refreshRTKClaudeState() {
+        Task.detached(priority: .utility) {
+            let state = RTKClaudeManager.state()
+            await MainActor.run { rtkClaudeState = state }
+        }
+    }
+
+    private func manageRTKClaude() {
+        if case .rtkNotFound = rtkClaudeState {
+            _ = NSWorkspace.shared.open(URL(string: "https://github.com/rtk-ai/rtk")!)
+            return
+        }
+        let shouldRemove: Bool
+        if case .installed = rtkClaudeState { shouldRemove = true } else { shouldRemove = false }
+        rtkClaudeWorking = true
+        rtkClaudeError = nil
+        Task.detached(priority: .utility) {
+            var operationError: String?
+            do {
+                if shouldRemove { try RTKClaudeManager.uninstall() }
+                else { try RTKClaudeManager.install() }
+            } catch {
+                operationError = error.localizedDescription
+            }
+            let newState = RTKClaudeManager.state()
+            await MainActor.run {
+                rtkClaudeError = operationError
+                rtkClaudeState = newState
+                rtkClaudeWorking = false
+            }
+        }
+    }
+
+    private var contextModeDescription: String {
+        switch contextModeState {
+        case .installed:
+            "Installed by AI Usage Monitor. Requires Claude Code and Node.js 22.5 or later; restart Claude Code after changes."
+        case .notInstalled:
+            "Install the official Claude Code plugin. Requires Claude Code 1.0.33+ and Node.js 22.5+."
+        case .unmanagedInstallation:
+            "Context Mode is already installed outside this app. AI Usage Monitor will leave it untouched."
+        case .unavailable(let reason): reason
+        }
+    }
+
+    private var contextModeButtonTitle: String {
+        switch contextModeState {
+        case .installed: "Remove"
+        case .notInstalled: "Install"
+        case .unmanagedInstallation: "Installed"
+        case .unavailable: "Retry"
+        }
+    }
+
+    private var contextModeButtonDisabled: Bool {
+        if case .unmanagedInstallation = contextModeState { return true }
+        return false
+    }
+
+    private func refreshContextModeState() {
+        Task.detached(priority: .utility) {
+            let state = ContextModeManager.state()
+            await MainActor.run { contextModeState = state }
+        }
+    }
+
+    private func manageContextMode() {
+        if case .unavailable = contextModeState {
+            refreshContextModeState()
+            return
+        }
+        let shouldRemove: Bool
+        if case .installed = contextModeState { shouldRemove = true } else { shouldRemove = false }
+        contextModeWorking = true
+        contextModeError = nil
+        Task.detached(priority: .utility) {
+            var operationError: String?
+            do {
+                if shouldRemove { try ContextModeManager.uninstall() }
+                else { try ContextModeManager.install() }
+            } catch {
+                operationError = error.localizedDescription
+            }
+            let newState = ContextModeManager.state()
+            await MainActor.run {
+                contextModeError = operationError
+                contextModeState = newState
+                contextModeWorking = false
+            }
+        }
+    }
+
     private var claudePaneDescription: String {
         switch claudePaneState {
         case .installed:
@@ -647,6 +889,122 @@ struct GeneralSettingsView: View {
                 claudePaneError = operationError
                 claudePaneState = newState
                 claudePaneWorking = false
+            }
+        }
+    }
+
+    private func syncClaudeResponseModes() {
+        do {
+            try ClaudeResponseModeSettings.write(
+                tokenSaver: claudeTokenSaverEnabled,
+                beginner: claudeBeginnerModeEnabled
+            )
+            claudeResponseModesError = nil
+        } catch {
+            claudeResponseModesError = "Could not save Claude Code response modes: \(error.localizedDescription)"
+        }
+    }
+}
+
+private struct RTKAgentSettingsRow: View {
+    let agent: RTKAgent
+    @State private var state: RTKAgentManager.State = .rtkNotFound
+    @State private var error: String?
+    @State private var working = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 10) {
+                Image(systemName: agent == .codex ? "terminal" : "sparkles")
+                    .font(.system(size: 16))
+                    .foregroundStyle(UsageTheme.claude)
+                    .frame(width: 22)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(agent.displayName) · RTK")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(UsageTheme.primaryText)
+                    Text(description)
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 6)
+                Button(buttonTitle) { performAction() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(working || buttonDisabled)
+            }
+            if let error {
+                SettingsErrorText(text: error)
+                    .padding(.leading, 32)
+            }
+        }
+        .padding(.vertical, 7)
+        .frame(minHeight: 44)
+        .onAppear(perform: refreshState)
+    }
+
+    private var description: String {
+        switch state {
+        case .rtkNotFound:
+            "RTK CLI not found. Install the binary first; the app only manages this agent's hook."
+        case .notInstalled(let version):
+            "RTK \(version) ready. Installs the user-wide hook; restart \(agent.displayName) afterward."
+        case .installed(let version):
+            "RTK \(version) hook is installed. Restart \(agent.displayName) after changing it."
+        case .unmanagedInstallation(let version, let reason):
+            "RTK \(version) is configured outside the app. \(reason)"
+        case .unavailable(let message): message
+        }
+    }
+
+    private var buttonTitle: String {
+        switch state {
+        case .rtkNotFound: "Get RTK"
+        case .notInstalled: "Install"
+        case .installed: "Remove"
+        case .unmanagedInstallation: "Installed"
+        case .unavailable: "Retry"
+        }
+    }
+
+    private var buttonDisabled: Bool {
+        switch state {
+        case .unmanagedInstallation, .unavailable: true
+        default: false
+        }
+    }
+
+    private func refreshState() {
+        Task.detached(priority: .utility) {
+            let refreshed = RTKAgentManager.state(for: agent)
+            await MainActor.run { state = refreshed }
+        }
+    }
+
+    private func performAction() {
+        if case .rtkNotFound = state {
+            _ = NSWorkspace.shared.open(URL(string: "https://github.com/rtk-ai/rtk")!)
+            return
+        }
+        let shouldRemove: Bool
+        if case .installed = state { shouldRemove = true } else { shouldRemove = false }
+        working = true
+        error = nil
+        Task.detached(priority: .utility) {
+            var operationError: String?
+            do {
+                if shouldRemove { try RTKAgentManager.uninstall(agent) }
+                else { try RTKAgentManager.install(agent) }
+            } catch {
+                operationError = error.localizedDescription
+            }
+            let refreshed = RTKAgentManager.state(for: agent)
+            await MainActor.run {
+                self.error = operationError
+                state = refreshed
+                working = false
             }
         }
     }

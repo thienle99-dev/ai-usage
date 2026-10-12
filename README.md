@@ -53,6 +53,12 @@ Tasks estimated below 4,000 input tokens do not trigger a low-quota warning. For
 
 In **Settings → General → CLI Integration**, install the Claude Code status line to show quota from the last local snapshot. It reads no credentials and makes no network or model requests. AI Usage Monitor installs only when Claude Code has no existing `statusLine` configuration; removal is enabled only while the configured command still matches the app's ownership record. Claude Code may need to be restarted after changing the setting.
 
+The same section can manage RTK hooks for Claude Code, Codex, and Gemini CLI when the RTK CLI is already installed. AI Usage Monitor does not install or update the RTK binary and offers removal only for integrations it recorded as app-managed. RTK compacts supported terminal command output; it does not reduce every model request or provider quota. The app does not enable RTK telemetry. To avoid removing existing hooks, the app leaves Gemini installations with pre-existing `BeforeTool` hooks for manual configuration.
+
+## Context Mode for Claude Code
+
+In **Settings → General → Claude Code Context Mode**, install the official Context Mode plugin from its Claude Code marketplace. Installation requires Claude Code v1.0.33+ and Node.js v22.5+; AI Usage Monitor does not install either prerequisite or bundle Context Mode source. It only removes a plugin and marketplace that it recorded as app-managed, and leaves an existing unmanaged installation untouched. Context Mode keeps local session and index data, and its `ctx_execute` tool runs code with Claude Code's filesystem permissions. AI Usage Monitor does not read Context Mode data or enable its settings automatically.
+
 The formatter can also be used by compatible shell prompts and hooks:
 
 ```sh
@@ -70,6 +76,10 @@ In **Settings → General → Claude Code Side Pane**, install the AI Usage pane
 ## Claude Code progress hand-off
 
 Progress hand-off is off by default in **Settings → General → Progress hand-off**. After opting in, choose a live Claude Code session and prepare a preview. The app reads only the last text user request from the tail of that session's local JSONL transcript, Git status and staged/unstaged diff, plus explicit TODO/checklist lines from that request and added diff lines. The preview is shown before anything is passed to Claude. Untracked files are listed but not read, the diff is capped at 60,000 characters, and temporary hand-off files are removed when Terminal starts the new interactive session. The new session starts with the reviewed prompt in the selected project directory.
+
+## Claude Code response modes
+
+**Settings → General → Claude Code Response Modes** provides **Token Saver** and **Beginner Mode**, both off by default. With the AI Usage Monitor Claude Code plugin installed, enabled modes add short response preferences to each submitted prompt: Token Saver asks for concise answers without dropping important caveats; Beginner Mode asks for plain-language explanations of unfamiliar terms. The app makes no separate model request, but added prompt context can consume input tokens. Changes apply to the next prompt.
 
 ## Development notes
 

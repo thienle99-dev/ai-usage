@@ -3,6 +3,7 @@ const SNAPSHOT_PATH = 'Library/Application Support/AIUsage/snapshots.json'
 const SESSION_REFRESH_MS = 15000
 const QUOTA_REFRESH_MS = 60000
 const DONE_RETENTION_MS = 300000
+const RESPONSE_MODES_PATH = 'Library/Application Support/AIUsage/ClaudePane/response-modes.json'
 
 let quotaRows = []
 let quotaError = ''
@@ -15,6 +16,7 @@ let activeTab = 'overview'
 let lastQuotaRefresh = 0
 let sessionTimer
 let quotaTimer
+let activeResponseModes = []
 
 const providerOrder = ['Claude', 'Codex', 'Copilot', 'Cursor', 'Gemini', 'Antigravity', 'Grok', 'OpenCode']
 const providerNames = {
@@ -156,12 +158,37 @@ async function refreshAll($) {
   await Promise.all([refreshConversations($), refreshAgents($)])
 }
 
+async function responseModeContext($) {
+  activeResponseModes = []
+  try {
+    const home = (await $.env.get('HOME')) || ''
+    if (!home) return ''
+    const saved = JSON.parse(await $.fs.read(`${home}/${RESPONSE_MODES_PATH}`))
+    const instructions = []
+    if (saved?.tokenSaver === true) {
+      activeResponseModes.push('Token Saver')
+      instructions.push('Token Saver mode: Keep your answer concise and direct. Avoid repeating context, include only necessary examples, and preserve critical reasoning and caveats.')
+    }
+    if (saved?.beginner === true) {
+      activeResponseModes.push('Beginner Mode')
+      instructions.push('Beginner Mode: Explain unfamiliar technical terms in plain language the first time they appear. Add a brief example when it helps, without assuming prior expertise.')
+    }
+    return instructions.length ? `[AI Usage Monitor response preferences]\n${instructions.join('\n')}` : ''
+  } catch (_) {
+    activeResponseModes = []
+    return ''
+  }
+}
+
 function panelText(Text, value, options = {}) {
   return Text({ children: [value], ...options })
 }
 
 function quotaView(Box, Text) {
   const rows = []
+  if (activeResponseModes.length) {
+    rows.push(panelText(Text, `Response modes · ${activeResponseModes.join(' + ')}`, { dimColor: true }))
+  }
   for (const item of quotaRows) {
     rows.push(panelText(Text, `${item.provider}${item.account ? ` · ${item.account}` : ''}${item.stale ? ' · stale' : ''}`, { bold: true }))
     for (const window of item.windows) {
@@ -224,9 +251,16 @@ export function register(on) {
     quotaTimer?.cancel()
     sessionTimer = $.clock.every(SESSION_REFRESH_MS, () => refreshAll($))
     quotaTimer = $.clock.every(QUOTA_REFRESH_MS, () => refreshQuota($))
+    await responseModeContext($)
     await refreshAll($)
     return next(event)
   })
+
+  on('prompt.submit', async ($, event, next) => {
+    const extraContext = await responseModeContext($)
+    if (!extraContext) return next(event)
+    return next({ ...event, context: [...(event.context || []), extraContext] })
+  }).catch(async ($, event, next) => next(event))
 
   on('command.run', { command: 'usage-pane' }, async $ => {
     await $.ui.open({ id: PANE, title: 'AI Usage', columns: 42, rows: 14, closeOnEscape: true })
@@ -234,7 +268,7 @@ export function register(on) {
   })
 
   on('classic.Stop', async ($, event, next) => {
-    const result = await next(event).catch(error => { throw error })
+    const result = await next(event)
     const now = Date.now()
     if (Array.isArray(event.background_tasks)) {
       backgroundTasks = event.background_tasks.filter(task => task && typeof task === 'object')
@@ -243,13 +277,13 @@ export function register(on) {
     shellRuns = shellRuns.filter(run => run.end === null || now - run.end < DONE_RETENTION_MS)
     redraw($)
     return result
-  })
+  }).catch(async ($, event, next) => next(event))
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const run = { id: event.tool_use_id || `shell-${Date.now()}`, label: String(event.description || event.command || 'Shell command').slice(0, 80), start: Date.now(), end: null, status: 'running' }
     shellRuns.push(run)
     redraw($)
-    const result = await next(event).catch(error => { throw error })
+    const result = await next(event)
     const at = shellRuns.findIndex(item => item.id === run.id)
     if (at >= 0) {
       const response = result?.result
@@ -263,7 +297,7 @@ export function register(on) {
     }
     redraw($)
     return result
-  })
+  }).catch(async ($, event, next) => next(event))
 
   on('ui.render', { component: 'Pane' }, async ($, event, next) => {
     if (event.requestId !== PANE) return next(event)
