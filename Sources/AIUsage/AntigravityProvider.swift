@@ -12,15 +12,18 @@ struct AntigravityProvider: UsageProvider {
     private let loader: any HTTPDataLoading
     private let homeDirectory: URL
     private let credentialReader: @Sendable () -> Data?
+    private let clientProvider: @Sendable () -> AntigravityOAuthClient?
 
     init(
         loader: any HTTPDataLoading = URLSessionDataLoader(),
         homeDirectory: URL? = nil,
-        credentialReader: @escaping @Sendable () -> Data? = { AntigravityCredentials.keychainData() }
+        credentialReader: @escaping @Sendable () -> Data? = { AntigravityCredentials.keychainData() },
+        clientProvider: @escaping @Sendable () -> AntigravityOAuthClient? = { AntigravityOAuthClientResolver.resolve() }
     ) {
         self.loader = loader
         self.homeDirectory = homeDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         self.credentialReader = credentialReader
+        self.clientProvider = clientProvider
     }
 
     func fetch() async throws -> UsageSnapshot {
@@ -67,12 +70,15 @@ struct AntigravityProvider: UsageProvider {
     }
 
     private func refresh(refreshToken: String, preserving identityLabel: String?) async throws -> AntigravityCredentials {
+        guard let client = clientProvider() else {
+            throw ProviderFailure.credentials("Antigravity session expired. Update or install Antigravity.app, or set ANTIGRAVITY_OAUTH_CLIENT_ID and ANTIGRAVITY_OAUTH_CLIENT_SECRET, then sign in again.")
+        }
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = AntigravityCredentials.formBody([
-            "client_id": AntigravityCredentials.clientID,
-            "client_secret": AntigravityCredentials.clientSecret,
+            "client_id": client.id,
+            "client_secret": client.secret,
             "refresh_token": refreshToken,
             "grant_type": "refresh_token"
         ])
@@ -97,6 +103,119 @@ struct AntigravityProvider: UsageProvider {
     }
 }
 
+/// OAuth client for refreshing the Antigravity session. Values are never
+/// hardcoded: explicit `ANTIGRAVITY_OAUTH_CLIENT_ID` /
+/// `ANTIGRAVITY_OAUTH_CLIENT_SECRET` entries win, otherwise the pair is
+/// discovered from the installed Antigravity/Gemini app bundle that ships it.
+/// Reference: research/CodexBar/docs/antigravity.md (client discovery) and
+/// research/CodexBar/Sources/CodexBarCore/Providers/Antigravity/AntigravityOAuthCredentialsStore.swift.
+/// Limitation: bundle layouts are unofficial and reverse-engineered; discovery
+/// is best-effort and returns nil when the pair is absent or ambiguous.
+struct AntigravityOAuthClient: Sendable, Equatable {
+    let id: String
+    let secret: String
+}
+
+enum AntigravityOAuthClientResolver {
+    /// Caps per-file reads; language-server binaries can be large.
+    static let maxArtifactBytes = 16 * 1024 * 1024
+    static let clientIDPattern = #"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com"#
+    static let clientSecretPattern = #"GOCSPX-[A-Za-z0-9_-]{28}"#
+
+    static func resolve(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        applicationRoots: [URL]? = nil,
+        fileManager: FileManager = .default
+    ) -> AntigravityOAuthClient? {
+        let trimmed: (String?) -> String? = {
+            guard let value = $0?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+            return value
+        }
+        if let id = trimmed(environment["ANTIGRAVITY_OAUTH_CLIENT_ID"]),
+           let secret = trimmed(environment["ANTIGRAVITY_OAUTH_CLIENT_SECRET"]) {
+            return AntigravityOAuthClient(id: id, secret: secret)
+        }
+        return discover(applicationRoots: applicationRoots, fileManager: fileManager)
+    }
+
+    static func discover(applicationRoots: [URL]? = nil, fileManager: FileManager = .default) -> AntigravityOAuthClient? {
+        let roots = applicationRoots ?? [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Applications", isDirectory: true)
+        ]
+        // Fast path: the standard bundle name needs no Info.plist lookup.
+        for root in roots {
+            if let client = scan(bundle: root.appendingPathComponent("Antigravity.app", isDirectory: true)) {
+                return client
+            }
+        }
+        for root in roots {
+            for bundle in matchingBundles(under: root, fileManager: fileManager) {
+                if let client = scan(bundle: bundle) { return client }
+            }
+        }
+        return nil
+    }
+
+    private static let artifactRelativePaths = [
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm",
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos_x64",
+        "Contents/Resources/app/extensions/antigravity/bin/language_server_macos",
+        "Contents/Resources/app/out/main.js",
+        "Contents/Resources/bin/language_server",
+        "Contents/Resources/bin/language_server_macos",
+        "Contents/MacOS/Gemini"
+    ]
+
+    private static let antigravityBundleIDs: Set<String> = [
+        "com.google.antigravity", "com.google.antigravity-ide", "com.google.GeminiMacOS"
+    ]
+
+    private static func scan(bundle: URL) -> AntigravityOAuthClient? {
+        for relative in artifactRelativePaths {
+            let url = bundle.appendingPathComponent(relative)
+            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { continue }
+            let text = String(decoding: Data(data.prefix(maxArtifactBytes)), as: UTF8.self)
+            if let client = unambiguousClient(in: text) { return client }
+        }
+        return nil
+    }
+
+    private static func matchingBundles(under root: URL, fileManager: FileManager) -> [URL] {
+        var urls: [URL] = []
+        var seen = Set<String>()
+        let gemini = root.appendingPathComponent("Gemini.app", isDirectory: true)
+        var candidates = [gemini]
+        if let entries = try? fileManager.contentsOfDirectory(at: root, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            candidates += entries.filter { $0.pathExtension == "app" }
+        }
+        for url in candidates {
+            let key = url.standardizedFileURL.path
+            guard !seen.contains(key), url.lastPathComponent != "Antigravity.app" else { continue }
+            seen.insert(key)
+            guard let identifier = Bundle(url: url)?.bundleIdentifier,
+                  antigravityBundleIDs.contains(identifier) else { continue }
+            urls.append(url)
+        }
+        return urls
+    }
+
+    /// Returns the pair only when the text contains exactly one client id and
+    /// exactly one secret; multiple distinct values mean mixed artifacts.
+    static func unambiguousClient(in text: String) -> AntigravityOAuthClient? {
+        guard let id = singleMatch(clientIDPattern, in: text),
+              let secret = singleMatch(clientSecretPattern, in: text) else { return nil }
+        return AntigravityOAuthClient(id: id, secret: secret)
+    }
+
+    private static func singleMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        let values = Set(matches.compactMap { Range($0.range, in: text).map { String(text[$0]) } })
+        return values.count == 1 ? values.first : nil
+    }
+}
+
 private extension ProcessInfo {
     var machineArchitecture: String {
         #if arch(arm64)
@@ -112,10 +231,6 @@ private struct AntigravityCredentials {
     let refreshToken: String?
     let expiry: Date?
     let identityLabel: String?
-
-    // Public installed-app OAuth client used by Antigravity CLI.
-    static let clientID = ""
-    static let clientSecret = ""
 
     static func keychainData() -> Data? {
         let query: [String: Any] = [

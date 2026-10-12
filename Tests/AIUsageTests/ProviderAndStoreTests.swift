@@ -204,6 +204,84 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(String(data: requests.first?.httpBody ?? Data(), encoding: .utf8), "{}")
     }
 
+    func testAntigravityOAuthClientPrefersEnvironment() {
+        let env = [
+            "ANTIGRAVITY_OAUTH_CLIENT_ID": "env-test-id",
+            "ANTIGRAVITY_OAUTH_CLIENT_SECRET": "env-test-secret"
+        ]
+        XCTAssertEqual(
+            AntigravityOAuthClientResolver.resolve(environment: env, applicationRoots: []),
+            AntigravityOAuthClient(id: "env-test-id", secret: "env-test-secret")
+        )
+        XCTAssertNil(AntigravityOAuthClientResolver.resolve(environment: [:], applicationRoots: []))
+    }
+
+    func testAntigravityOAuthClientDiscoveryFindsInstalledPair() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agy-client-\(UUID().uuidString)")
+        let artifact = root.appendingPathComponent("Antigravity.app/Contents/Resources/app/out/main.js")
+        try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        // Built at runtime so the source never contains a secret-shaped literal.
+        let clientID = "814204162361-" + "fixtureclientid" + ".apps.googleusercontent.com"
+        let secret = "GOCSPX-" + String(repeating: "F", count: 28)
+        try Data("oauthClient={id:\"\(clientID)\",secret:\"\(secret)\"};".utf8).write(to: artifact)
+        let client = AntigravityOAuthClientResolver.resolve(environment: [:], applicationRoots: [root])
+        XCTAssertEqual(client?.id, clientID)
+        XCTAssertEqual(client?.secret, secret)
+    }
+
+    func testAntigravityOAuthClientDiscoveryRejectsAmbiguousPairs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("agy-client-\(UUID().uuidString)")
+        let artifact = root.appendingPathComponent("Antigravity.app/Contents/Resources/app/out/main.js")
+        try FileManager.default.createDirectory(at: artifact.deletingLastPathComponent(), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = "111-" + "aaaaaaaaaaaaaaaaaaaa" + ".apps.googleusercontent.com"
+        let second = "222-" + "bbbbbbbbbbbbbbbbbbbb" + ".apps.googleusercontent.com"
+        let secret = "GOCSPX-" + String(repeating: "E", count: 28)
+        try Data("\(first)\n\(second)\n\(secret)".utf8).write(to: artifact)
+        XCTAssertNil(AntigravityOAuthClientResolver.resolve(environment: [:], applicationRoots: [root]))
+    }
+
+    func testAntigravityRefreshUsesResolvedClient() async throws {
+        let expired = Data(#"{"token":{"access_token":"old-token","refresh_token":"fixture-refresh","expiry":"2020-10-13T12:30:00Z"}}"#.utf8)
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"access_token":"new-token","expires_in":3600}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8))
+        ])
+        let provider = AntigravityProvider(
+            loader: loader,
+            credentialReader: { expired },
+            clientProvider: { AntigravityOAuthClient(id: "injected-id", secret: "injected-secret") }
+        )
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.account, "Antigravity User · agy@example.com")
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.first?.url?.absoluteString, "https://oauth2.googleapis.com/token")
+        let body = String(data: requests.first?.httpBody ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("client_id=injected-id"))
+        XCTAssertTrue(body.contains("client_secret=injected-secret"))
+        XCTAssertTrue(body.contains("refresh_token=fixture-refresh"))
+    }
+
+    func testAntigravityRefreshFailsClearlyWithoutClient() async {
+        let expired = Data(#"{"token":{"access_token":"old-token","refresh_token":"fixture-refresh","expiry":"2020-10-13T12:30:00Z"}}"#.utf8)
+        let loader = FixtureHTTPDataLoader([])
+        let provider = AntigravityProvider(loader: loader, credentialReader: { expired }, clientProvider: { nil })
+        do {
+            _ = try await provider.fetch()
+            XCTFail("Expected credentials failure")
+        } catch let failure as ProviderFailure {
+            guard case .credentials(let message) = failure else {
+                XCTFail("Wrong failure: \(failure)")
+                return
+            }
+            XCTAssertTrue(message.contains("ANTIGRAVITY_OAUTH_CLIENT_SECRET"))
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+    }
+
     func testGrokParserReadsCurrentWeekCreditsAndDefaultsMissingUsageToZero() throws {
         let line = Data(#"{"msg":"billing: fetched credits config","ts":"2026-10-12T10:00:00Z","ctx":{"config":{"currentPeriod":{"end":"2026-10-19T10:00:00Z"}},"subscriptionTier":"SuperGrok"}}"#.utf8)
         let quota = try XCTUnwrap(GrokParsing.quota(from: line))
