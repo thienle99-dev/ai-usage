@@ -109,14 +109,21 @@ final class ProviderAndStoreTests: XCTestCase {
 
     func testAntigravityProviderUsesExistingCredentialAndQuotaEndpoint() async throws {
         let credential = Data(#"{"token":{"access_token":"fixture-antigravity-token","expiry":"2099-10-13T12:30:00Z"}}"#.utf8)
-        let loader = FixtureHTTPDataLoader([HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8))])
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8))
+        ])
         let provider = AntigravityProvider(loader: loader, credentialReader: { credential })
         let snapshot = try await provider.fetch()
         XCTAssertEqual(snapshot.provider, .antigravity)
         XCTAssertEqual(snapshot.windows.first?.label, "Gemini Weekly")
         XCTAssertEqual(snapshot.windows.first?.validUtilization, 80)
+        XCTAssertEqual(snapshot.account, "Antigravity User · agy@example.com")
         let requests = await loader.capturedRequests()
-        XCTAssertEqual(requests.first?.url?.absoluteString, "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
+        XCTAssertEqual(requests.map(\.url?.absoluteString), [
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+            "https://openidconnect.googleapis.com/v1/userinfo"
+        ])
         XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-antigravity-token")
         XCTAssertEqual(String(data: requests.first?.httpBody ?? Data(), encoding: .utf8), "{}")
     }

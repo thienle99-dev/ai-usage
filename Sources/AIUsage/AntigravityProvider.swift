@@ -31,7 +31,7 @@ struct AntigravityProvider: UsageProvider {
         var accessToken = credential.accessToken
         if credential.expiry.map({ $0 <= .now.addingTimeInterval(60) }) != false,
            let refreshToken = credential.refreshToken {
-            credential = try await refresh(refreshToken: refreshToken)
+            credential = try await refresh(refreshToken: refreshToken, preserving: credential.identityLabel)
             accessToken = credential.accessToken
         }
         guard let accessToken, !accessToken.isEmpty else {
@@ -48,10 +48,25 @@ struct AntigravityProvider: UsageProvider {
         guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("Antigravity returned no HTTP response.") }
         guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
         let windows = try AntigravityParsing.windows(data)
-        return UsageSnapshot(provider: .antigravity, windows: windows, account: nil, lastSuccess: .now)
+        let account = await fetchAccount(accessToken: accessToken) ?? credential.identityLabel
+        return UsageSnapshot(provider: .antigravity, windows: windows, account: account, lastSuccess: .now)
     }
 
-    private func refresh(refreshToken: String) async throws -> AntigravityCredentials {
+    private func fetchAccount(accessToken: String) async -> String? {
+        var request = URLRequest(url: URL(string: "https://openidconnect.googleapis.com/v1/userinfo")!)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await loader.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        let name = (root["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = (root["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let values = [name, email].compactMap { $0 }.filter { !$0.isEmpty }
+        return values.isEmpty ? nil : values.joined(separator: " · ")
+    }
+
+    private func refresh(refreshToken: String, preserving identityLabel: String?) async throws -> AntigravityCredentials {
         var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
@@ -73,7 +88,7 @@ struct AntigravityProvider: UsageProvider {
             }
             throw ProviderFailure.http(http.statusCode)
         }
-        return AntigravityCredentials(accessToken: token, refreshToken: refreshToken, expiry: .now.addingTimeInterval(seconds.doubleValue))
+        return AntigravityCredentials(accessToken: token, refreshToken: refreshToken, expiry: .now.addingTimeInterval(seconds.doubleValue), identityLabel: identityLabel)
     }
 
     private func perform(_ request: URLRequest, service: String) async throws -> (Data, URLResponse) {
@@ -96,6 +111,7 @@ private struct AntigravityCredentials {
     let accessToken: String?
     let refreshToken: String?
     let expiry: Date?
+    let identityLabel: String?
 
     // Public installed-app OAuth client used by Antigravity CLI.
     static let clientID = ""
@@ -125,11 +141,25 @@ private struct AntigravityCredentials {
         guard let root = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
               let token = root["token"] as? [String: Any] else { return nil }
         let expiry = (token["expiry"] as? String).flatMap(parseDate)
+        let claims = (token["id_token"] as? String).flatMap(jwtClaims)
+        let name = (claims?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let email = ((claims?["email"] as? String) ?? (token["email"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = [name, email].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
         return AntigravityCredentials(
             accessToken: token["access_token"] as? String,
             refreshToken: token["refresh_token"] as? String,
-            expiry: expiry
+            expiry: expiry,
+            identityLabel: identity.isEmpty ? nil : identity
         )
+    }
+
+    private static func jwtClaims(_ token: String) -> [String: Any]? {
+        let components = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard components.count >= 2 else { return nil }
+        var payload = String(components[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let data = Data(base64Encoded: payload) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     static func formBody(_ fields: [String: String]) -> Data {
