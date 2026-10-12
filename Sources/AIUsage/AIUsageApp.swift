@@ -69,7 +69,7 @@ struct UsagePopover: View {
                 Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
                     .buttonStyle(HeaderIconButtonStyle()).help("Refresh now")
                     .disabled(!store.refreshing.isEmpty)
-                Button { openSettings() } label: { Image(systemName: "gearshape") }
+                Button { showSettings() } label: { Image(systemName: "gearshape") }
                     .buttonStyle(HeaderIconButtonStyle()).help("Settings")
                 Button { NSApplication.shared.terminate(nil) } label: { Image(systemName: "xmark") }
                     .buttonStyle(HeaderIconButtonStyle()).help("Quit")
@@ -77,11 +77,23 @@ struct UsagePopover: View {
             ForEach(Provider.allCases.filter { store.visibleProviders.contains($0) }) { provider in
                 providerCard(provider)
             }
-            HStack { Text("Refreshes every \(max(1, store.refreshInterval / 60)) min"); Spacer(); Text("Settings…").foregroundStyle(.secondary).onTapGesture { openSettings() } }
+            HStack {
+                Text("Refreshes every \(max(1, store.refreshInterval / 60)) min")
+                Spacer()
+                Button("Settings…") { showSettings() }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
                 .font(.caption)
         }
         .padding(16).frame(width: 340).task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
         .preferredColorScheme(store.appearance == "Light" ? .light : store.appearance == "Dark" ? .dark : nil)
+    }
+    private func showSettings() {
+        // Menu bar apps run as accessory apps. Activate before asking SwiftUI to
+        // present its Settings scene so the window doesn't open behind other apps.
+        NSApp.activate(ignoringOtherApps: true)
+        openSettings()
     }
     @ViewBuilder private func providerCard(_ provider: Provider) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -116,21 +128,290 @@ struct UsagePopover: View {
     private func color(for usage: Double) -> Color { usage >= store.criticalThreshold ? .red : usage >= store.warningThreshold ? .orange : .accentColor }
 }
 
+private extension Provider {
+    var systemImage: String {
+        switch self {
+        case .claude: return "sparkles"
+        case .codex: return "terminal.fill"
+        }
+    }
+    var tint: Color {
+        switch self {
+        case .claude: return .orange
+        case .codex: return .green
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .claude: return "Claude Code OAuth usage"
+        case .codex: return "Codex CLI app-server"
+        }
+    }
+}
+
 struct SettingsView: View {
     @Environment(UsageStore.self) private var store
     var body: some View {
         @Bindable var store = store
-        Form {
-            Section("Providers") { ForEach(Provider.allCases) { provider in Toggle(provider.rawValue, isOn: Binding(get: { store.visibleProviders.contains(provider) }, set: { enabled in if enabled { store.visibleProviders.insert(provider) } else { store.visibleProviders.remove(provider) } })) } }
-            Section("Display") {
-                Picker("Menu bar", selection: $store.menuBarStyle) { Text("Highest usage").tag("Highest usage"); Text("App name").tag("App name") }
-                Picker("Appearance", selection: $store.appearance) { Text("System").tag("System"); Text("Light").tag("Light"); Text("Dark").tag("Dark") }
-                HStack { Text("Warning at"); Slider(value: $store.warningThreshold, in: 30...95, step: 5); Text("\(Int(store.warningThreshold))%") }
-                HStack { Text("Critical at"); Slider(value: $store.criticalThreshold, in: 50...100, step: 5); Text("\(Int(store.criticalThreshold))%") }
-                Picker("Refresh", selection: $store.refreshInterval) { Text("1 minute").tag(60); Text("5 minutes").tag(300); Text("15 minutes").tag(900); Text("30 minutes").tag(1800) }.onChange(of: store.refreshInterval) { store.schedule() }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header
+                providersCard(store: $store)
+                displayCard(store: $store)
+                thresholdsCard(store: $store)
+                statusCard
+                aboutCard
             }
-            Section("Provider status") { ForEach(Provider.allCases) { provider in HStack { Text(provider.rawValue); Spacer(); Text(store.snapshots[provider]?.error ?? (store.snapshots[provider] == nil ? "Not refreshed" : "Connected")).foregroundStyle(.secondary) } } }
-            Section("About") { Text("AI Usage Monitor · reads existing Claude Code and Codex CLI credentials. Usage endpoints and app-server protocol may change. MIT-licensed design and integration references: claude-usage-widget by bozdemir; codex-usage-bar by CMMUU.").font(.caption).foregroundStyle(.secondary) }
-        }.padding(20).frame(width: 480, height: 460)
+            .padding(22)
+        }
+        .frame(width: 560, height: 600)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .preferredColorScheme(store.appearance == "Light" ? .light : store.appearance == "Dark" ? .dark : nil)
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(LinearGradient(colors: [.purple, .blue], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 44, height: 44)
+                Image(systemName: "chart.bar.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("AIUsage Settings").font(.title3.weight(.semibold))
+                Text("Menu bar monitor for Claude and Codex quotas")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    private func providersCard(store: Bindable<UsageStore>) -> some View {
+        SettingsSection(title: "Providers", icon: "cpu") {
+            VStack(spacing: 0) {
+                ForEach(Provider.allCases) { provider in
+                    HStack(spacing: 12) {
+                        Image(systemName: provider.systemImage)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(provider.tint))
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(provider.rawValue).font(.body.weight(.medium))
+                            Text(provider.subtitle).font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Toggle(provider.rawValue, isOn: Binding(
+                            get: { store.wrappedValue.visibleProviders.contains(provider) },
+                            set: { enabled in
+                                if enabled { store.wrappedValue.visibleProviders.insert(provider) }
+                                else { store.wrappedValue.visibleProviders.remove(provider) }
+                            }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                    }
+                    .padding(.vertical, 9)
+                    if provider != Provider.allCases.last {
+                        Divider().padding(.leading, 42)
+                    }
+                }
+            }
+        }
+    }
+
+    private func displayCard(store: Bindable<UsageStore>) -> some View {
+        SettingsSection(title: "Display", icon: "display") {
+            VStack(spacing: 12) {
+                SettingsRow(label: "Menu bar") {
+                    Picker("", selection: store.menuBarStyle) {
+                        Text("Highest usage").tag("Highest usage")
+                        Text("App name").tag("App name")
+                    }
+                    .pickerStyle(.menu).frame(maxWidth: 220, alignment: .trailing)
+                    .labelsHidden()
+                }
+                Divider()
+                SettingsRow(label: "Appearance") {
+                    Picker("", selection: store.appearance) {
+                        Text("System").tag("System")
+                        Text("Light").tag("Light")
+                        Text("Dark").tag("Dark")
+                    }
+                    .pickerStyle(.segmented).frame(width: 220)
+                    .labelsHidden()
+                }
+                Divider()
+                SettingsRow(label: "Refresh") {
+                    Picker("", selection: store.refreshInterval) {
+                        Text("1 minute").tag(60)
+                        Text("5 minutes").tag(300)
+                        Text("15 minutes").tag(900)
+                        Text("30 minutes").tag(1800)
+                    }
+                    .pickerStyle(.menu).frame(maxWidth: 220, alignment: .trailing)
+                    .labelsHidden()
+                    .onChange(of: store.wrappedValue.refreshInterval) { store.wrappedValue.schedule() }
+                }
+            }
+        }
+    }
+
+    private func thresholdsCard(store: Bindable<UsageStore>) -> some View {
+        SettingsSection(title: "Thresholds", icon: "exclamationmark.triangle") {
+            VStack(spacing: 14) {
+                ThresholdRow(
+                    label: "Warning",
+                    value: store.warningThreshold,
+                    tint: .orange,
+                    range: 30...95
+                )
+                Divider()
+                ThresholdRow(
+                    label: "Critical",
+                    value: store.criticalThreshold,
+                    tint: .red,
+                    range: 50...100
+                )
+                Text("Menu bar turns orange at warning, red at critical.")
+                    .font(.caption).foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .onChange(of: store.wrappedValue.warningThreshold) {
+            if store.wrappedValue.warningThreshold >= store.wrappedValue.criticalThreshold {
+                store.wrappedValue.criticalThreshold = min(100, store.wrappedValue.warningThreshold + 5)
+            }
+        }
+        .onChange(of: store.wrappedValue.criticalThreshold) {
+            if store.wrappedValue.criticalThreshold <= store.wrappedValue.warningThreshold {
+                store.wrappedValue.warningThreshold = max(30, store.wrappedValue.criticalThreshold - 5)
+            }
+        }
+    }
+
+    private var statusCard: some View {
+        SettingsSection(title: "Provider status", icon: "antenna.radiowaves.left.and.right") {
+            VStack(spacing: 0) {
+                ForEach(Provider.allCases) { provider in
+                    HStack(spacing: 10) {
+                        StatusDot(provider: provider)
+                        Text(provider.rawValue).font(.body)
+                        Spacer()
+                        Text(statusText(for: provider))
+                            .font(.callout).foregroundStyle(.secondary)
+                        if store.refreshing.contains(provider) {
+                            ProgressView().controlSize(.small)
+                        }
+                    }
+                    .padding(.vertical, 7)
+                    if provider != Provider.allCases.last {
+                        Divider().padding(.leading, 22)
+                    }
+                }
+            }
+        }
+    }
+
+    private var aboutCard: some View {
+        SettingsSection(title: "About", icon: "info.circle") {
+            Text("AI Usage Monitor · reads existing Claude Code and Codex CLI credentials. Usage endpoints and app-server protocol may change.\nMIT-licensed design and integration references: claude-usage-widget by bozdemir; codex-usage-bar by CMMUU.")
+                .font(.caption).foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func statusText(for provider: Provider) -> String {
+        if let snapshot = store.snapshots[provider] {
+            return snapshot.error ?? "Connected"
+        }
+        return "Not refreshed"
+    }
+}
+
+private struct SettingsSection<Content: View>: View {
+    let title: String
+    let icon: String
+    @ViewBuilder let content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(title.uppercased(), systemImage: icon)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 2)
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
+        }
+    }
+}
+
+private struct SettingsRow<Content: View>: View {
+    let label: String
+    @ViewBuilder let content: Content
+    var body: some View {
+        HStack {
+            Text(label)
+                .font(.body)
+                .frame(width: 100, alignment: .leading)
+            Spacer()
+            content
+        }
+        .padding(.vertical, 3)
+    }
+}
+
+private struct ThresholdRow: View {
+    let label: String
+    @Binding var value: Double
+    let tint: Color
+    let range: ClosedRange<Double>
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(label).font(.body).frame(width: 100, alignment: .leading)
+            Slider(value: $value, in: range, step: 5)
+                .tint(tint)
+            Text("\(Int(value))%")
+                .font(.callout.weight(.semibold).monospacedDigit())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 9).padding(.vertical, 4)
+                .background(Capsule().fill(tint))
+                .frame(minWidth: 56)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct StatusDot: View {
+    @Environment(UsageStore.self) private var store
+    let provider: Provider
+    var body: some View {
+        Circle()
+            .fill(dotColor)
+            .frame(width: 9, height: 9)
+            .overlay(Circle().strokeBorder(.white.opacity(0.6), lineWidth: 0.5))
+    }
+    private var dotColor: Color {
+        if store.refreshing.contains(provider) { return .blue }
+        guard let snapshot = store.snapshots[provider] else { return .gray.opacity(0.5) }
+        if snapshot.error != nil { return .orange }
+        let peak = snapshot.windows.map(\.utilization).max() ?? 0
+        if peak >= store.criticalThreshold { return .red }
+        if peak >= store.warningThreshold { return .orange }
+        return .green
     }
 }
