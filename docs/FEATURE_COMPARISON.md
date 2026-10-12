@@ -4,18 +4,19 @@
 **Ứng dụng:** AI Usage Monitor trong repo này  
 **Tham khảo:** [steipete/CodexBar](https://github.com/steipete/CodexBar), chủ yếu là README và mục Providers/Features trên nhánh `main`.
 
-CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác thực và bề mặt sử dụng. AI Usage Monitor hiện tập trung vào Claude Code và Codex. Bảng dưới đây đối chiếu tính năng dựa trên code đang có, không coi tính năng chỉ được nhắc trong README là đã hoàn tất.
+CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác thực và bề mặt sử dụng. AI Usage Monitor hiện tập trung vào Claude Code, Codex và Cursor. Bảng dưới đây đối chiếu tính năng dựa trên code đang có, không coi tính năng chỉ được nhắc trong README là đã hoàn tất.
 
 ## Đã có trong AI Usage Monitor
 
 | Nhóm | Tính năng hiện có | Tình trạng |
 |---|---|---|
 | Ứng dụng macOS | SwiftUI `MenuBarExtra`, popover, cửa sổ Settings, quit | Có trong code |
-| Provider | Claude Code OAuth và Codex CLI app-server | Có adapter cho hai provider |
+| Provider | Claude Code OAuth, Codex CLI app-server, Cursor web usage API | Có adapter cho ba provider; Cursor dùng local Cursor.app auth hoặc cookie |
 | Claude auth | Đọc `CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CONFIG_DIR/.credentials.json` hoặc Keychain | Chỉ đọc; không lưu hoặc ghi token |
 | Tài khoản Claude | Lấy email/tên và plan từ `/api/oauth/profile`, cache trong RAM theo token tối đa 6 giờ | Hiển thị dưới usage giống dòng account của Codex; nếu profile API không trả email/tên thì bỏ trống |
 | Claude usage | Gọi `GET /api/oauth/usage`, parser hỗ trợ các trường legacy, `limits[]` (`session`, `weekly_all`, `weekly_scoped`) và Usage credits | Gửi OAuth beta header; retry tối đa 2 lần khi gặp HTTP 429 và tôn trọng `Retry-After` (tối đa 30 giây). Live quota windows chưa xác nhận |
 | Codex usage | Tìm Codex CLI ở một số đường dẫn và gọi `account/read`, `account/rateLimits/read` qua JSON-RPC | Có timeout và parser cho response lồng nhau; live success chưa xác nhận |
+| Cursor usage | `GET /api/usage-summary` và `/api/auth/me` qua session Cursor | Hiển thị Plan, Auto/Composer, API model và on-demand fields khi response có; nguồn endpoint không tài liệu công khai và có thể đổi |
 | Hiển thị usage | Progress bar, phần trăm, tên window, thời gian reset tương đối | Hiện có khi provider trả dữ liệu nhận diện được |
 | Làm mới | Nút refresh và chu kỳ 1, 5, 10, 15 phút hoặc Manual only; mặc định 5 phút | Có. Manual only vẫn fetch một lần khi app khởi động, sau đó chỉ fetch theo thao tác người dùng |
 | Lỗi và cache | Giữ snapshot thành công gần nhất, hiển thị stale/error; lưu snapshot cục bộ | Có; không có lịch sử chuỗi snapshot |
@@ -26,8 +27,8 @@ CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác 
 
 | Nhóm | CodexBar có | AI Usage Monitor hiện thiếu |
 |---|---|---|
-| Số lượng provider | Nhiều provider cho coding plans, API billing, credits và gateways; danh sách cụ thể thay đổi theo phiên bản | Chỉ Claude Code và Codex |
-| Nguồn dữ liệu / xác thực | Tuỳ provider: CLI, OAuth, API key, browser cookie, local app/config hoặc dashboard | Chỉ OAuth credential Claude Code và local Codex app-server |
+| Số lượng provider | Nhiều provider cho coding plans, API billing, credits và gateways; danh sách cụ thể thay đổi theo phiên bản | Claude Code, Codex và Cursor; các provider khác mới có điều hướng |
+| Nguồn dữ liệu / xác thực | Tuỳ provider: CLI, OAuth, API key, browser cookie, local app/config hoặc dashboard | Claude Code OAuth, local Codex app-server, Cursor.app local auth hoặc cookie nhập thủ công |
 | Tùy biến menu bar | Icon provider, nhãn, bars/percent, reset style, chọn usage cao nhất, gộp nhiều provider, xếp layout | Có icon only, phần trăm cao nhất, provider-specific hoặc critical-only; chưa có sắp xếp provider/layout tùy chỉnh |
 | Usage history | Lưu mẫu theo thời gian, biểu đồ và quota burndown cho provider hỗ trợ | Chỉ snapshot mới nhất và cache stale |
 | Spend / cost | Ước tính và báo cáo chi phí theo provider, model, session/project và thời gian; mức hỗ trợ tuỳ nguồn | Chỉ hiển thị Claude Usage credits (đã dùng / giới hạn) nếu API trả về; không có lịch sử chi phí, model/session breakdown hoặc thống kê token |
@@ -66,6 +67,79 @@ CodexBar mô tả các nhóm này trong [README](https://github.com/steipete/Cod
 3. Thiết kế provider interface/config trước khi thêm provider mới; ưu tiên provider có API/CLI/local source ổn định.
 4. Thêm CLI cho xem trạng thái, refresh và cấu hình provider.
 5. Thêm localization, launch-at-login, updater, signing/notarization và hướng dẫn phát hành.
+
+## Phụ lục A — Đã có (chi tiết, tại thời điểm đối chiếu)
+
+| Nhóm | Chi tiết (kèm symbol/file trong repo này) |
+|---|---|
+| Provider enum | 9 cases (`codex, claude, cursor, copilot, gemini, windsurf, cline, roo, openCode`), `supported = [.codex, .claude, .cursor]`; mỗi case có `displayName/shortName/menuBarAbbreviation/systemImage` (`Models.swift`) |
+| Claude adapter | `ClaudeProvider` inject `HTTPDataLoading`; token env → `CLAUDE_CONFIG_DIR/.credentials.json` → Keychain; `GET /api/oauth/usage` + beta `oauth-2025-04-20`; retry 429 tối đa 2 lần, tôn trọng `Retry-After` (cap 30s, `ClaudeRetryPolicy`); profile `/api/oauth/profile` cache RAM 6h theo fingerprint SHA256 (`Providers.swift`) |
+| Codex adapter | `CodexProvider` inject `CodexAppServerDataSource`; discovery CLI nhiều đường dẫn + PATH; JSON-RPC `initialize` → `account/read` → `account/rateLimits/read`, timeout bounded, parse response lồng nhau, chọn weekly theo duration (`Providers.swift`) |
+| Cursor adapter | Đọc read-only SQLite `Cursor/.../state.vscdb` (`CursorAppAuthStore`, cần `Sources/CSQLite3`), validate JWT expiry + userID, bọc `WorkosCursorSessionToken`; hoặc cookie thủ công trong Keychain; `GET /api/usage-summary` + `/api/auth/me` (`Providers.swift`) |
+| Models | `UsageSnapshot` (`windows/account/lastSuccess/error/status`), `UsageWindow` (`label/utilization/resetsAt/detail`); `validUtilization` lọc giá trị ngoài 0–100 khỏi hiển thị/tổng hợp; `ProviderStatus` 5 trạng thái + map từ `ProviderFailure` (gồm cả `.network`) (`Models.swift`) |
+| Store | Refresh đồng thời theo provider (task group), single-flight (bỏ qua provider đang refresh), `refresh(provider:)` riêng lẻ; lỗi giữ snapshot cũ + gán `status`; cache JSON local; `schedule()` theo `RefreshPolicy` 1/5/10/15 phút + Manual (manual vẫn fetch 1 lần lúc khởi động) (`UsageStore.swift`) |
+| Menu bar | `MenuBarStatusView`: icon `chart.bar.fill` (hoặc `exclamationmark.triangle.fill` khi critical), text monospaced theo `MenuBarDisplayMode`: iconOnly / combinedUsage (%) / providerSpecific (`C 3% · A 5%`) / criticalProviderOnly; accessibility label + tooltip (`AIUsageApp.swift`) |
+| Popover | `UsagePopover`: cards theo provider (progress bar, %, reset tương đối, account, stale/error), footer refresh/settings/quit; `ProviderIconNavigationView` điều hướng provider (mới) |
+| Settings | Cửa sổ Settings riêng (680×500), sections Providers / Display / Thresholds / Status / About; appearance System/Light/Dark (`colorSchemeOverride`, `Theme.swift`); warning < critical tự kẹp; launch at login qua `SMAppService` |
+| Tests | `ParserTests` (Claude/Codex/Cursor parsers) + `ProviderAndStoreTests` (inject HTTP/Codex sources: retry 429, status mapping, failure independence, stale, single-flight) |
+| Tooling | SPM, `scripts/package-app.sh`, README + `TECHNICAL_PLAN.md` + file đối chiếu này |
+
+## Phụ lục B — Còn thiếu (từ source CodexBar, kèm file gốc)
+
+Chi tiết kiến trúc và thứ tự gợi ý ở [codexbar-research.md](codexbar-research.md).
+`research/CodexBar/` = repo CodexBar.
+
+### Menu bar & icon
+
+| CodexBar có (source) | App này thiếu |
+|---|---|
+| Cached template image 18×18 cho text-only, `attributedTitle` cho stale/emoji/multiline; loading giới hạn FPS + trần thời gian (`docs/ui.md`) | Icon/text render trực tiếp bằng SwiftUI, chưa có render path tối ưu hay loading guard |
+| Dim icon khi stale, incident overlay trên icon (`docs/ui.md`, `ProviderStatusFetcher`) | Chưa dim khi stale; chỉ màu ngưỡng trong popover |
+| Color-by-provider opt-in + gate tương phản, về monochrome khi menu mở/stale (`docs/ui.md`, `docs/provider-palette.md`) | Chưa có |
+| Merge Icons + switcher; nguồn gộp Current/Highest/Frontmost (`StatusItemController+SwitcherViews.swift`, `FrontmostProviderMonitor.swift`) | Chỉ 1 item Highest/combined; chưa gộp/chuyển provider |
+| Token layout editor kéo-thả 1–2 dòng + per-provider override (`MenuBarLayout.swift` 218 symbols, `MenuBarLayoutEditor.swift`, `MenuBarLayoutRenderer.swift`) | 4 mode cố định, chưa tùy biến token/thứ tự |
+| Pace token `+11%/-8%`, `Color Pace Indicator`, reset style countdown/absolute (`docs/ui.md`) | Chưa có pace; reset chỉ tương đối trong popover |
+| Ổn định vị trí (autosave identity, giữ Cmd-drag, xóa item khi quit), chẩn đoán `CODEXBAR_STATUS_ITEM_DIAGNOSTICS=1` | Chưa có |
+
+### Claude
+
+| CodexBar có (source) | App này thiếu |
+|---|---|
+| Keychain gates/cooldowns/ACL repair, probe non-interactive trước (`ClaudeOAuthKeychain*Gate*.swift`, `ClaudeOAuthDirectKeychainReadConsent.swift`) | Đọc Keychain trực tiếp, chưa cooldown/chính sách prompt |
+| Tự refresh `POST /v1/oauth/token`, `invalid_grant` chặn tới khi fingerprint đổi, 401 backoff mũ 6h (`ClaudeOAuthRefreshFailureGate.swift`, `ClaudeTokenRefresher` tương đương) | Nhờ Claude Code refresh, chưa tự refresh/backoff dài |
+| Web cookies opt-in Safari→Chrome→Firefox + Manual header (`docs/claude.md#Web API`) | Chưa có nguồn web |
+| CLI PTY fallback `/usage` parse frame (`ClaudeStatusProbe.swift`, `ClaudeCLISession.swift`, watchdog helper) | Chưa có |
+| Admin API spend Today/7d/30d + chart (`ClaudeAdminAPIUsageFetcher.swift`) | Chưa có spend |
+| Multi-account `tokenAccounts` + `claude-swap` (`ClaudeSwap/`, `StatusItemController+ClaudeSwapMenu.swift`) | Đơn account |
+| Scoped-weekly mapper, Extra usage/Cloud credits/Reset credits, burndown Plan Usage (`ClaudeScopedWeeklyLimitMapper.swift`, `ClaudeRateLimitResetCredits.swift`) | Parser cơ bản session/weekly/credits |
+
+### Codex
+
+| CodexBar có (source) | App này thiếu |
+|---|---|
+| Chuỗi Auto PAT → OAuth → CLI RPC; OAuth trực tiếp `wham/usage` + JWT freshness, CLI sở hữu refresh (`CodexOAuthUsageFetcher.swift`, `CodexTokenRefresher.swift`, `docs/codex-oauth.md`) | Chỉ CLI RPC |
+| Weekly-reset publication gate (giữ last-trusted khi reset khả nghi) (`docs/codex.md`, `codex-weekly-reset-publication`) | Tin timestamp server ngay |
+| `additional_rate_limits[]` → extra windows ẩn/hiện (`CodexAdditionalRateLimitMapper.swift`) | Chưa map extra windows |
+| Dashboard web opt-in: review/breakdown/credits history (`CodexWebDashboardStrategy.swift`) | Chưa có |
+| Managed accounts, profile homes, System promotion (`ManagedCodexAccountCredentialResolver.swift`, `CodexAccountPromotion*.swift`) | Đơn home |
+| Cost scan local JSONL + SQLite caps + burndown (`docs/codex.md`, `RemoteCodexCostFetcher.swift`) | Chưa có |
+
+### Refresh, status, history, nền tảng
+
+| CodexBar có (source) | App này thiếu |
+|---|---|
+| Adaptive refresh pure (`AdaptiveRefreshPolicyCore`: menu-recency 2m/5m/15m/30m + LowPower/thermal) + agent-aware opt-in có consent (`docs/refresh-loop.md`, `docs/predictive-refresh-policy.md`, replay −49,7% refresh) | Timer cố định theo `RefreshPolicy` |
+| Menu-open refresh (mặc định chỉ provider thiếu/lỗi), không retry ngay sau batch lỗi | Chưa có |
+| Statuspage.io + Google incidents poll, incident badge menu/icon (`ProviderStatusFetcher`, `docs/status.md`) | Chỉ lỗi refresh cục bộ |
+| Lịch sử snapshot retention + burndown + local cost ledger (JSONL/SQLite) + kỷ luật honesty (recorded ≠ bill) (`BurnDownWidgetProvider.swift`, `docs/cost-*.md`) | Chỉ snapshot mới nhất + cache stale |
+| 8 loại WidgetKit qua app-group JSON (`Sources/CodexBarWidget/`, `docs/widgets.md`) | Chưa có widget |
+| CLI `usage/cost/cards/dashboard/serve/guard/hooks/sessions` + exit codes scripting (`Sources/CodexBarCLI/`, `docs/cli.md`) | Chưa có CLI |
+| Reset/quota notification off-default + dedupe, credential-expiry episodes, confetti (`SessionQuotaNotifications.swift`, `AppNotifications.swift`) | Chưa có notification |
+| `config.json` 0600 versioned + quản lý bằng CLI, preferences export/import, CloudKit opt-in, secrets tách Keychain (`docs/configuration.md`) | Mọi preferences trong UserDefaults |
+| i18n 23 ngôn ngữ + RTL, Sparkle updater + appcast, sign/notarize scripts, release checklist (`Scripts/`, `docs/RELEASING.md`, `docs/sparkle.md`) | Chưa có |
+| Provider plugin system + authoring guide (`ProviderFetchStrategy` ~119 impl, `ScriptFetchStrategy.swift`, `docs/provider.md`, `docs/plugins.md`) | Thêm provider = sửa enum + adapter thủ công |
+| Tích hợp Linux/Qt, Omarchy, Waybar/GNOME/KDE, ESP32 desk display, Stream Deck qua `serve` (README Related) | Chỉ macOS app |
+| Suite test sharded + SwiftFormat/SwiftLint gates (`AGENTS.md`, `Makefile`) | XCTest cơ bản |
 
 ## Tiêu chí chọn phạm vi
 

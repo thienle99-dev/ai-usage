@@ -68,6 +68,7 @@ private struct MenuBarStatusView: View {
 
 private struct ProviderIconNavigationView: View {
     @Binding var selection: Provider?
+    let providers: [Provider]
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var selectedID: String { selection?.rawValue ?? "all" }
@@ -85,7 +86,7 @@ private struct ProviderIconNavigationView: View {
                     ) { selection = nil }
                     .id("all")
 
-                    ForEach(Provider.allCases) { provider in
+                    ForEach(providers) { provider in
                         ProviderNavigationItem(
                             title: provider.shortName,
                             accessibilityName: provider.displayName,
@@ -183,7 +184,8 @@ struct UsagePopover: View {
                 selection: Binding(
                     get: { store.selectedProvider },
                     set: { store.selectedProvider = $0 }
-                )
+                ),
+                providers: Provider.supported.filter { store.visibleProviders.contains($0) }
             )
 
             if shownProviders.isEmpty {
@@ -224,7 +226,7 @@ struct UsagePopover: View {
                     Text(unsupported ? "\(selected?.displayName ?? "Provider") not integrated" : "No providers shown")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(UsageTheme.primaryText)
-                    Text(unsupported ? "Usage tracking is unavailable for this provider." : "Enable Codex or Claude in Settings.")
+                    Text(unsupported ? "Usage tracking is unavailable for this provider." : "Enable a provider in Settings.")
                         .font(.system(size: 11))
                         .foregroundStyle(UsageTheme.secondaryText)
                 }
@@ -527,6 +529,9 @@ struct SettingsWindowView: View {
     @State private var cursorCookieHeader = ""
     @State private var cursorCredentialMessage: String?
     @State private var cursorHasStoredCookie = CursorCredentialVault.hasStoredCookie
+    @State private var openCodeCookieHeader = ""
+    @State private var openCodeCredentialMessage: String?
+    @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
 
     var body: some View {
         @Bindable var store = store
@@ -582,7 +587,12 @@ struct SettingsWindowView: View {
                         get: { store.wrappedValue.visibleProviders.contains(provider) },
                         set: { enabled in
                             if enabled { store.wrappedValue.visibleProviders.insert(provider) }
-                            else { store.wrappedValue.visibleProviders.remove(provider) }
+                            else {
+                                store.wrappedValue.visibleProviders.remove(provider)
+                                if store.wrappedValue.selectedProvider == provider {
+                                    store.wrappedValue.selectedProvider = nil
+                                }
+                            }
                         }
                     ))
                 }
@@ -659,6 +669,27 @@ struct SettingsWindowView: View {
                 Text("Cursor's usage-summary endpoint is undocumented and may change. The billing-cycle end is shown when returned. Never paste a cookie into logs or screenshots.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("OpenCode session") {
+                Text("OpenCode usage comes from its authenticated dashboard. Paste the Cookie header from an OpenCode browser session; the app keeps only OpenCode auth cookies in macOS Keychain.")
+                    .font(.caption).foregroundStyle(.secondary)
+                SecureField("OpenCode Cookie header", text: $openCodeCookieHeader)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Label(openCodeHasStoredCookie ? "Session cookie stored in macOS Keychain" : "No OpenCode session connected", systemImage: openCodeHasStoredCookie ? "checkmark.shield" : "key")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Save cookie & refresh") { saveOpenCodeCredentials() }
+                        .disabled(openCodeCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if openCodeHasStoredCookie {
+                        Button("Remove cookie", role: .destructive) { removeOpenCodeCredentials() }
+                    }
+                }
+                if let openCodeCredentialMessage {
+                    Text(openCodeCredentialMessage).font(.caption).foregroundStyle(UsageTheme.secondaryText)
+                }
+                Text("OpenCode's dashboard API is undocumented and may change. Session cookies expire; never paste them into logs or screenshots.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding(18)
@@ -669,6 +700,7 @@ struct SettingsWindowView: View {
         case .claude: "Claude Code OAuth usage"
         case .codex: "Local Codex app-server"
         case .cursor: "Cursor session · usage-summary web API"
+        case .openCode: "OpenCode dashboard session · web API"
         default: "Not integrated"
         }
     }
@@ -678,6 +710,7 @@ struct SettingsWindowView: View {
         case .claude: "Sign in with Claude Code to refresh. Credentials are read-only and never shown here."
         case .codex: "Sign in with Codex CLI or the ChatGPT app. AI Usage Monitor does not read Codex auth files."
         case .cursor: "Cursor.app authentication is read-only. An optional web session cookie is stored in Keychain."
+        case .openCode: "Add an OpenCode dashboard cookie in Settings. The session is stored in Keychain."
         default: "Usage tracking is not integrated for this provider."
         }
     }
@@ -701,14 +734,33 @@ struct SettingsWindowView: View {
         cursorCredentialMessage = "Saved Cursor cookie removed. Cursor.app session can still be used."
     }
 
+    private func saveOpenCodeCredentials() {
+        do {
+            try OpenCodeCredentialVault.save(cookieHeader: openCodeCookieHeader)
+            openCodeCookieHeader = ""
+            openCodeHasStoredCookie = true
+            openCodeCredentialMessage = "Saved securely. Fetching OpenCode usage…"
+            Task { await store.refresh(provider: .openCode) }
+        } catch {
+            openCodeCredentialMessage = error.localizedDescription
+        }
+    }
+
+    private func removeOpenCodeCredentials() {
+        OpenCodeCredentialVault.delete()
+        openCodeCookieHeader = ""
+        openCodeHasStoredCookie = false
+        openCodeCredentialMessage = "Saved OpenCode cookie removed."
+    }
+
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "chart.bar.fill").font(.system(size: 30)).foregroundStyle(UsageTheme.secondaryText)
             Text("AI Usage Monitor").font(.title2.weight(.semibold))
-            Text("A native menu bar utility for Claude Code, Codex, and Cursor usage.")
+            Text("A native menu bar utility for Claude Code, Codex, Cursor, and OpenCode usage.")
                 .foregroundStyle(UsageTheme.secondaryText)
             Divider().overlay(UsageTheme.separator)
-            Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor usage uses its session-authenticated web API. Provider interfaces can change.")
+            Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor and OpenCode usage use their session-authenticated web APIs. Provider interfaces can change.")
                 .font(.callout).foregroundStyle(UsageTheme.secondaryText)
             Text("UI and integration references are MIT licensed: claude-usage-widget by bozdemir and codex-usage-bar by CMMUU.")
                 .font(.caption).foregroundStyle(UsageTheme.mutedText)

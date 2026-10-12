@@ -58,8 +58,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openCode: "chevron.left.forwardslash.chevron.right"
         }
     }
-    var isUsageSupported: Bool { self == .codex || self == .claude || self == .cursor }
-    static let supported: [Provider] = [.codex, .claude, .cursor]
+    var isUsageSupported: Bool { self == .codex || self == .claude || self == .cursor || self == .openCode }
+    static let supported: [Provider] = [.codex, .claude, .cursor, .openCode]
 }
 
 enum ProviderStatus: String, Codable, Sendable {

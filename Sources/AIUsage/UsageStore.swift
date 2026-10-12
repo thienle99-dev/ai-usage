@@ -57,7 +57,7 @@ import ServiceManagement
     }
 
     init(
-        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider()],
+        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider(), OpenCodeProvider()],
         defaults: UserDefaults = .standard,
         cacheURL: URL? = nil,
         startImmediately: Bool = true

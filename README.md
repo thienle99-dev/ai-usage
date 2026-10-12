@@ -1,6 +1,6 @@
 # AI Usage Monitor
 
-A native macOS 14+ menu bar app for checking Claude Code, Codex, and Cursor usage. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, and the local Codex app-server protocol. It has no third-party runtime dependencies.
+A native macOS 14+ menu bar app for checking Claude Code, Codex, Cursor, and OpenCode usage. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, and the local Codex app-server protocol. It has no third-party runtime dependencies.
 
 ## Build and run
 
@@ -33,6 +33,8 @@ Claude credentials are looked up read-only in this order: `CLAUDE_CODE_OAUTH_TOK
 Codex usage is read from the local `codex app-server` over JSON-RPC (`account/read` and `account/rateLimits/read`). The app discovers the executable in common install locations and `PATH`; it does not read Codex auth files directly. The process is bounded by a timeout.
 
 Cursor usage uses Cursor's session-authenticated `GET https://cursor.com/api/usage-summary` and `/api/auth/me` endpoints, following CodexBar's current source strategy. By default, the app reads `cursorAuth/accessToken` from `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb` using SQLite read-only mode, validates the JWT identity/expiry, then forms the `WorkosCursorSessionToken` cookie expected by Cursor's web API. An optional manual `cursor.com` cookie header can be stored in Keychain. The usage-summary endpoint is undocumented and may change. It reports included plan usage percentages, Auto/API breakdowns, on-demand usage, and billing-cycle end when Cursor provides them. See [CodexBar's Cursor provider notes](https://github.com/steipete/CodexBar/blob/main/docs/cursor.md).
+
+OpenCode usage uses the authenticated `opencode.ai` dashboard server functions to discover a workspace and read its rolling five-hour and weekly subscription usage. Add a browser Cookie header in Settings; only `auth`, `__Host-auth`, and `__Host-console_session` values are kept, in macOS Keychain. OpenCode's dashboard API and cookies are undocumented and may change. OpenCode Go and pay-as-you-go spend are not included in this provider yet. See [CodexBar's OpenCode provider notes](research/CodexBar/docs/opencode.md).
 
 These provider endpoints/protocols are compatibility-sensitive and may change. Re-authenticate with the relevant CLI when the provider reports an authentication error. If Codex is unavailable, confirm `codex` is installed and can start `app-server`. If Claude usage is unavailable, sign in with Claude Code and try Refresh.
 

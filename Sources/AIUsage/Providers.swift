@@ -295,6 +295,208 @@ struct CursorProvider: UsageProvider {
     }
 }
 
+/// Reads OpenCode's dashboard quota using a manually supplied session cookie.
+struct OpenCodeProvider: UsageProvider {
+    let provider = Provider.openCode
+    private let loader: any HTTPDataLoading
+    private let cookieProvider: @Sendable () throws -> String
+
+    init(
+        loader: any HTTPDataLoading = URLSessionDataLoader(),
+        cookieProvider: @escaping @Sendable () throws -> String = { try OpenCodeCredentialVault.cookieHeader() }
+    ) {
+        self.loader = loader
+        self.cookieProvider = cookieProvider
+    }
+
+    func fetch() async throws -> UsageSnapshot {
+        let cookie = try cookieProvider()
+        if cookie.split(separator: ";").contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("__Host-console_session=") }) {
+            let workspace = try await consoleRequest(path: "/console/api/orgs", workspaceID: nil, cookie: cookie)
+            guard let workspaceID = OpenCodeParsing.workspaceID(workspace) else {
+                throw ProviderFailure.invalidResponse("OpenCode Console did not return a workspace ID.")
+            }
+            let usage = try await consoleRequest(path: "/console/api/go/status", workspaceID: workspaceID, cookie: cookie)
+            return UsageSnapshot(provider: .openCode, windows: try OpenCodeParsing.consoleWindows(usage), account: nil, lastSuccess: .now)
+        }
+        let workspace = try await request(serverID: Self.workspacesID, args: nil, referer: "https://opencode.ai", cookie: cookie)
+        guard let workspaceID = OpenCodeParsing.workspaceID(workspace) else {
+            throw ProviderFailure.invalidResponse("OpenCode did not return a workspace ID.")
+        }
+        let billingPage = "https://opencode.ai/workspace/\(workspaceID)/billing"
+        let payload = try await request(serverID: Self.subscriptionID, args: [workspaceID], referer: billingPage, cookie: cookie)
+        let windows = try OpenCodeParsing.windows(payload)
+        return UsageSnapshot(provider: .openCode, windows: windows, account: nil, lastSuccess: .now)
+    }
+
+    private static let workspacesID = "def39973159c7f0483d8793a822b8dbb10d067e12c65455fcb4608459ba0234f"
+    private static let subscriptionID = "7abeebee372f304e050aaaf92be863f4a86490e382f8c79db68fd94040d691b4"
+
+    private func request(serverID: String, args: [String]?, referer: String, cookie: String) async throws -> String {
+        var components = URLComponents(string: "https://opencode.ai/_server")!
+        components.queryItems = [URLQueryItem(name: "id", value: serverID)]
+        if let args, let data = try? JSONSerialization.data(withJSONObject: args), let value = String(data: data, encoding: .utf8) {
+            components.queryItems?.append(URLQueryItem(name: "args", value: value))
+        }
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue(serverID, forHTTPHeaderField: "X-Server-Id")
+        request.setValue("server-fn:\(UUID().uuidString)", forHTTPHeaderField: "X-Server-Instance")
+        request.setValue("https://opencode.ai", forHTTPHeaderField: "Origin")
+        request.setValue(referer, forHTTPHeaderField: "Referer")
+        request.setValue("text/javascript, application/json;q=0.9, */*;q=0.8", forHTTPHeaderField: "Accept")
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await loader.data(for: request) }
+        catch { throw ProviderFailure.network("Could not reach OpenCode. Check your network and try again.") }
+        guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("No HTTP response from OpenCode.") }
+        guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ProviderFailure.invalidResponse("OpenCode returned a non-text response.")
+        }
+        return text
+    }
+
+    private func consoleRequest(path: String, workspaceID: String?, cookie: String) async throws -> String {
+        var request = URLRequest(url: URL(string: "https://opencode.ai\(path)")!)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let workspaceID { request.setValue(workspaceID, forHTTPHeaderField: "x-org-id") }
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await loader.data(for: request) }
+        catch { throw ProviderFailure.network("Could not reach OpenCode. Check your network and try again.") }
+        guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("No HTTP response from OpenCode.") }
+        guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw ProviderFailure.invalidResponse("OpenCode returned a non-text response.")
+        }
+        return text
+    }
+}
+
+enum OpenCodeCredentialVault {
+    private static let service = "com.aiusagemonitor.opencode-session"
+    private static let account = "manual-cookie-header"
+
+    static var hasStoredCookie: Bool { read() != nil }
+
+    static func save(cookieHeader: String) throws {
+        let normalized = cookieHeader.split(separator: ";").compactMap { part -> String? in
+            let pair = part.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let separator = pair.firstIndex(of: "=") else { return nil }
+            let name = String(pair[..<separator])
+            return ["auth", "__Host-auth", "__Host-console_session"].contains(name) ? pair : nil
+        }.joined(separator: "; ")
+        guard !normalized.isEmpty else {
+            throw ProviderFailure.credentials("Enter an OpenCode cookie header containing auth or __Host-console_session.")
+        }
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account]
+        let update: [String: Any] = [kSecValueData as String: Data(normalized.utf8)]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = Data(normalized.utf8)
+            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else {
+                throw ProviderFailure.credentials("Could not save the OpenCode cookie in Keychain.")
+            }
+        } else if status != errSecSuccess {
+            throw ProviderFailure.credentials("Could not update the OpenCode cookie in Keychain.")
+        }
+    }
+
+    static func delete() {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    static func cookieHeader() throws -> String {
+        guard let value = read() else {
+            throw ProviderFailure.credentials("Add an OpenCode session cookie in Settings to connect.")
+        }
+        return value
+    }
+
+    private static func read() -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account,
+                                    kSecReturnData as String: true,
+                                    kSecMatchLimit as String: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+enum OpenCodeParsing {
+    static func workspaceID(_ text: String) -> String? {
+        firstMatch(#"(?:"id"|id)\s*:\s*["'](wrk_[A-Za-z0-9_-]+|org_[A-Za-z0-9_-]+)["']"#, in: text)
+    }
+
+    static func windows(_ text: String, now: Date = .now) throws -> [UsageWindow] {
+        guard let rolling = number(#"rollingUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)"#, in: text),
+              let rollingReset = number(#"rollingUsage[^}]*?resetInSec\s*:\s*([0-9]+)"#, in: text),
+              let weekly = number(#"weeklyUsage[^}]*?usagePercent\s*:\s*([0-9]+(?:\.[0-9]+)?)"#, in: text),
+              let weeklyReset = number(#"weeklyUsage[^}]*?resetInSec\s*:\s*([0-9]+)"#, in: text) else {
+            throw ProviderFailure.invalidResponse("OpenCode returned no recognized usage windows.")
+        }
+        return [
+            UsageWindow(label: "5-hour limit", utilization: rolling, resetsAt: now.addingTimeInterval(rollingReset)),
+            UsageWindow(label: "Weekly limit", utilization: weekly, resetsAt: now.addingTimeInterval(weeklyReset))
+        ]
+    }
+
+    static func consoleWindows(_ text: String) throws -> [UsageWindow] {
+        guard let data = text.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let access = root["access"] as? [String: Any],
+              let meters = access["meters"] as? [String: Any] else {
+            throw ProviderFailure.invalidResponse("OpenCode Console returned no subscription usage meters.")
+        }
+        let renewal = parseDate(access["endsAt"])
+        var windows: [UsageWindow] = []
+        for (key, label) in [("fiveHour", "5-hour limit"), ("week", "Weekly limit")] {
+            guard let meter = meters[key] as? [String: Any],
+                  let used = Double(String(describing: meter["usedMicroCents"] ?? "")),
+                  let limit = Double(String(describing: meter["limitMicroCents"] ?? "")), limit > 0 else { continue }
+            let resetsAt = parseDate(meter["resetsAt"]) ?? (key == "week" ? renewal : nil)
+            windows.append(UsageWindow(label: label, utilization: used / limit * 100, resetsAt: resetsAt))
+        }
+        guard !windows.isEmpty else { throw ProviderFailure.invalidResponse("OpenCode Console returned no recognized usage meters.") }
+        return windows
+    }
+
+    private static func parseDate(_ value: Any?) -> Date? {
+        guard let value = value as? String else { return nil }
+        let formatter = ISO8601DateFormatter()
+        if let date = formatter.date(from: value) { return date }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value)
+    }
+
+    private static func number(_ pattern: String, in text: String) -> Double? {
+        guard let value = firstMatch(pattern, in: text) else { return nil }
+        return Double(value)
+    }
+
+    private static func firstMatch(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    }
+}
+
 enum CursorCredentialVault {
     private static let service = "com.aiusagemonitor.cursor-session"
     private static let keyAccount = "manual-cookie-header"
