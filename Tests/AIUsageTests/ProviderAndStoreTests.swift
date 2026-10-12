@@ -97,6 +97,52 @@ private struct FixtureProvider: UsageProvider {
 }
 
 final class ProviderAndStoreTests: XCTestCase {
+    func testAntigravityParsingMapsGroupsAndResetDates() throws {
+        let payload = Data(#"{"response":{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"session","remainingFraction":0.75,"resetTime":"2026-10-13T12:30:00Z"},{"bucketId":"weekly","remaining":{"case":"remainingFraction","value":0.4}}]},{"displayName":"Claude and GPT models","buckets":[{"bucketId":"session","remainingFraction":0.9,"disabled":false}]}]}}"#.utf8)
+        let windows = try AntigravityParsing.windows(payload)
+        XCTAssertEqual(windows.map(\.label), ["Gemini 5-hour", "Gemini Weekly", "Claude / GPT 5-hour"])
+        XCTAssertEqual(windows[0].utilization, 25, accuracy: 0.001)
+        XCTAssertEqual(windows[1].utilization, 60, accuracy: 0.001)
+        XCTAssertEqual(windows[2].utilization, 10, accuracy: 0.001)
+        XCTAssertEqual(windows.first?.resetsAt, ISO8601DateFormatter().date(from: "2026-10-13T12:30:00Z"))
+    }
+
+    func testAntigravityProviderUsesExistingCredentialAndQuotaEndpoint() async throws {
+        let credential = Data(#"{"token":{"access_token":"fixture-antigravity-token","expiry":"2099-10-13T12:30:00Z"}}"#.utf8)
+        let loader = FixtureHTTPDataLoader([HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8))])
+        let provider = AntigravityProvider(loader: loader, credentialReader: { credential })
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.provider, .antigravity)
+        XCTAssertEqual(snapshot.windows.first?.label, "Gemini Weekly")
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 80)
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.first?.url?.absoluteString, "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary")
+        XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-antigravity-token")
+        XCTAssertEqual(String(data: requests.first?.httpBody ?? Data(), encoding: .utf8), "{}")
+    }
+
+    func testGrokParserReadsCurrentWeekCreditsAndDefaultsMissingUsageToZero() throws {
+        let line = Data(#"{"msg":"billing: fetched credits config","ts":"2026-10-12T10:00:00Z","ctx":{"config":{"currentPeriod":{"end":"2026-10-19T10:00:00Z"}},"subscriptionTier":"SuperGrok"}}"#.utf8)
+        let quota = try XCTUnwrap(GrokParsing.quota(from: line))
+        XCTAssertEqual(quota.usedPercent, 0)
+        XCTAssertEqual(quota.periodEnd, ISO8601DateFormatter().date(from: "2026-10-19T10:00:00Z"))
+        XCTAssertEqual(quota.subscriptionTier, "SuperGrok")
+    }
+
+    func testGrokProviderReadsLocalLogAndRejectsExpiredPeriod() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("grok-provider-\(UUID().uuidString)")
+        let logs = home.appendingPathComponent(".grok/logs", isDirectory: true)
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        let log = logs.appendingPathComponent("unified.jsonl")
+        let line = #"{"msg":"billing: fetched credits config","ts":"2099-10-12T10:00:00Z","ctx":{"config":{"creditUsagePercent":37.5,"currentPeriod":{"end":"2099-10-19T10:00:00Z"}},"subscriptionTier":"SuperGrok"}}"#
+        try Data(line.utf8).write(to: log)
+        let snapshot = try await GrokProvider(homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.windows.first?.label, "Weekly credits")
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 37.5)
+        XCTAssertEqual(snapshot.account, "SuperGrok")
+    }
+
     func testGeminiParsingGroupsModelQuotasAndKeepsResetDates() throws {
         let reset = "2026-10-13T12:30:00Z"
         let payload = Data(#"{"buckets":[{"modelId":"gemini-2.5-pro","remainingFraction":0.6,"resetTime":"2026-10-13T12:30:00Z"},{"modelId":"gemini-2.5-flash","remainingFraction":0.25,"resetTime":"2026-10-13T12:30:00Z"},{"modelId":"gemini-2.5-flash-lite","remainingFraction":0.8,"resetTime":"2026-10-13T12:30:00Z"}]}"#.utf8)
@@ -329,9 +375,9 @@ final class ProviderAndStoreTests: XCTestCase {
 
     func testProviderNavigationRegistryLabelsAndSupportedSources() {
         XCTAssertEqual(Provider.allCases.map(\.shortName), [
-            "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Windsurf", "Cline", "Roo", "OpenCode"
+            "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Antigravity", "Grok", "Windsurf", "Cline", "Roo", "OpenCode"
         ])
-        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .openCode])
+        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }

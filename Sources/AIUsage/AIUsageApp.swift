@@ -1222,6 +1222,8 @@ struct SettingsWindowView: View {
         case .cursor: "Cursor session · usage-summary web API"
         case .copilot: "GitHub OAuth · Copilot usage API"
         case .gemini: "Gemini CLI OAuth · Code Assist quota API"
+        case .antigravity: "Antigravity OAuth · Google Cloud Code quota API"
+        case .grok: "Grok CLI local billing log"
         case .openCode: "OpenCode dashboard session · web API"
         default: "Not integrated"
         }
@@ -1234,6 +1236,8 @@ struct SettingsWindowView: View {
         case .cursor: "Cursor.app authentication is read-only. An optional web session cookie is stored in Keychain."
         case .copilot: "Connect your GitHub account using device authorization. The token is stored in Keychain."
         case .gemini: "Sign in with Google through Gemini CLI. Usage is read from its OAuth session; API key and Vertex AI auth are unsupported."
+        case .antigravity: "Sign in to Antigravity CLI first. Its existing Keychain credential or legacy token file is read without changing it."
+        case .grok: "Use Grok CLI. Weekly credits are read from ~/.grok/logs/unified.jsonl; no network request is made."
         case .openCode: "Add an OpenCode dashboard cookie in Settings. The session is stored in Keychain."
         default: "Usage tracking is not integrated for this provider."
         }
@@ -1291,14 +1295,14 @@ struct SettingsWindowView: View {
                             Text("AI Usage Monitor")
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundStyle(UsageTheme.primaryText)
-                            Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, and OpenCode usage.")
+                            Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, Antigravity, Grok CLI, and OpenCode usage.")
                                 .font(.system(size: 11))
                                 .foregroundStyle(UsageTheme.secondaryText)
                         }
                     }
                     .padding(.bottom, 4)
                     SettingsDivider()
-                    Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, Gemini CLI, and OpenCode usage use their session-authenticated APIs. Provider interfaces can change.")
+                    Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, Gemini CLI, and Antigravity usage use their session-authenticated APIs; Grok CLI usage comes from its local log. Provider interfaces can change.")
                         .font(.system(size: 12))
                         .foregroundStyle(UsageTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
