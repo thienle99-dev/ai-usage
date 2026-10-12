@@ -69,7 +69,8 @@ import ServiceManagement
         let minimumGap = refreshPolicy.interval.map { TimeInterval($0.components.seconds) } ?? 60
         if let lastRefreshAttempt, Date.now.timeIntervalSince(lastRefreshAttempt) < min(minimumGap, 60) { return false }
         return snapshots.values.contains { snapshot in
-            snapshot.isStale || Date.now.timeIntervalSince(snapshot.lastSuccess) >= minimumGap
+            visibleProviders.contains(snapshot.provider)
+                && (snapshot.isStale || Date.now.timeIntervalSince(snapshot.lastSuccess) >= minimumGap)
         }
     }
 
@@ -126,7 +127,9 @@ import ServiceManagement
 
     func refresh(provider requestedProvider: Provider? = nil) async {
         let selectedProviders = providers.filter {
-            (requestedProvider == nil || $0.provider == requestedProvider) && !refreshing.contains($0.provider)
+            visibleProviders.contains($0.provider)
+                && (requestedProvider == nil || $0.provider == requestedProvider)
+                && !refreshing.contains($0.provider)
         }
         guard !selectedProviders.isEmpty else { return }
         lastRefreshAttempt = .now
@@ -243,7 +246,7 @@ import ServiceManagement
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.codexAuthCheckInterval)
                 guard !Task.isCancelled, let self else { return }
-                guard self.refreshPolicy != .manual else { continue }
+                guard self.refreshPolicy != .manual, self.visibleProviders.contains(.codex) else { continue }
                 if await self.codexAuthDidChange() {
                     await self.refresh(provider: .codex)
                 }
