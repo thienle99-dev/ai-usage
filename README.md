@@ -59,11 +59,14 @@ Query quota cached by the app or generate a local token report from Claude Code 
 ./scripts/ai-usage quota --provider codex
 ./scripts/ai-usage quota --format json | jq '.providers[].windows[] | {label, used_percent, resets_at}'
 ./scripts/ai-usage report --group project --range 30d --format json
+./scripts/ai-usage waste --range 7d --format json
 ```
 
 `quota` is read-only and uses the last app snapshot; it never refreshes providers or makes model requests. Omit `--provider` to print all supported providers, or pass a provider name/short name. Each provider includes a status, `stale` flag, account label, snapshot age and usage windows; each window has `used_percent`, `remaining_percent`, `resets_at` and detail when available. Missing percentages and dates are `null`/absent, never inferred. It exits with code `3` if the requested cache is unavailable. `report` scans local CLI logs only when invoked; `--group` accepts `day`, `provider`, `model`, `project` or `session`, and `--range` accepts `7d`, `30d` or `all`.
 
-JSON uses stable snake_case field names and ISO 8601 timestamps. Report rows include input, output, cache and total tokens; `estimated_cost_usd` is `null` when no source estimate exists, and `cost_is_estimate` identifies local estimates. For tmux, a compact text query can be used directly in a status line:
+JSON uses stable snake_case field names and ISO 8601 timestamps. Report rows include input, output, cache and total tokens; `estimated_cost_usd` is `null` when no source estimate exists, and `cost_is_estimate` identifies local estimates.
+
+`waste` is a review-only signal scanner for Claude Code logs. It counts repeated `Read` calls for the same file in a session and tool results larger than 20 KiB; it reports repeated/large output bytes, never inferred token counts or cost. It runs only when explicitly invoked and examines up to 10,000 directory entries and 500 candidate files, selects up to 100 newest among those, then reads at most the last 2 MiB per file, 64 MiB total and 1 MiB per JSONL line, within a 7- or 30-day event window. JSON coverage indicates when discovery hit its cap. File paths, commands, session IDs and log contents are not returned or saved; transient hashes are used to group repeats. It does not currently analyze Codex logs. For tmux, a compact text query can be used directly in a status line:
 
 ```tmux
 set -g status-right '#(./scripts/ai-usage quota --provider codex)'

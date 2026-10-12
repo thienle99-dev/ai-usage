@@ -17,6 +17,9 @@ const copy = lang === 'vi'
       quotaBody: 'quota đọc snapshot mới nhất mà app đã lưu. Bỏ --provider để lấy tất cả provider; có thể truyền tên đầy đủ hoặc tên ngắn.',
       reportTitle: 'Báo cáo token',
       reportBody: 'report chỉ quét log Claude Code và Codex khi bạn gọi lệnh. Có thể nhóm dữ liệu theo ngày, provider, model, project hoặc session và lọc 7 ngày, 30 ngày hoặc toàn bộ.',
+      wasteTitle: 'Tín hiệu token-waste',
+      wasteBody: 'waste tìm các lần Read lặp lại trong cùng session và tool output lớn trong log Claude Code. Đây là tín hiệu để xem lại, không quy đổi output byte thành token hay chi phí.',
+      wasteLimits: 'Chỉ quét khi gọi lệnh: 7 hoặc 30 ngày, tối đa 10.000 entry thư mục và 500 file ứng viên; chọn tối đa 100 file mới nhất trong số đó, 2 MiB/file, 64 MiB tổng, 1 MiB/line. JSON báo nếu đã chạm giới hạn khám phá. Không xuất path, command, session ID hoặc nội dung log; hiện chưa phân tích log Codex.',
       jsonTitle: 'JSON ổn định cho script',
       jsonBody: 'Dùng --format json để nhận một JSON object trên stdout, timestamp ISO 8601 và tên field snake_case. Stderr dành cho lỗi đối số.',
       quotaFields: 'Quota JSON gồm source=local_cache và providers. Mỗi provider có id, name, status, stale, account, age_seconds và windows. Mỗi window có label, used_percent, remaining_percent, resets_at và detail khi có dữ liệu.',
@@ -36,6 +39,9 @@ const copy = lang === 'vi'
       quotaBody: 'quota reads the latest snapshot saved by the app. Omit --provider for all providers; pass a full or short provider name to select one.',
       reportTitle: 'Token report',
       reportBody: 'report scans Claude Code and Codex logs only when invoked. Group by day, provider, model, project, or session; select the last 7 days, 30 days, or all time.',
+      wasteTitle: 'Token-waste signals',
+      wasteBody: 'waste finds repeated Read calls within a session and large tool outputs in Claude Code logs. These are review signals only; output bytes are not converted into tokens or cost.',
+      wasteLimits: 'Runs only when invoked: 7 or 30 days, up to 10,000 directory entries and 500 candidate files, selects up to 100 newest among them, 2 MiB per file, 64 MiB total, and 1 MiB per line. JSON reports when discovery reaches its cap. Paths, commands, session IDs, and log content are not emitted; Codex logs are not analyzed yet.',
       jsonTitle: 'Stable JSON for scripts',
       jsonBody: 'Pass --format json for one JSON object on stdout, ISO 8601 timestamps, and snake_case field names. Argument errors go to stderr.',
       quotaFields: 'Quota JSON includes source=local_cache and providers. Each provider has id, name, status, stale, account, age_seconds, and windows. Each window has label, used_percent, remaining_percent, resets_at, and detail when available.',
@@ -61,6 +67,14 @@ const copy = lang === 'vi'
       <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage quota --provider codex
 ./scripts/ai-usage report --group provider --range 7d</code></pre>
       <p class="mt-3 text-xs text-mist/70">{copy.exampleNote}</p>
+    </section>
+
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.wasteTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.wasteBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage waste --range 7d
+./scripts/ai-usage waste --range 30d --format json</code></pre>
+      <p class="mt-3 text-xs leading-relaxed text-mist/80">{copy.wasteLimits}</p>
     </section>
 
     <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">

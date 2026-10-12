@@ -108,6 +108,95 @@ enum UsageQueryCLI {
         }
     }
 
+    struct TokenWastePayload: Encodable {
+        struct Coverage: Encodable {
+            let scannedFiles: Int
+            let skippedFiles: Int
+            let candidateScanCapped: Bool
+            let truncatedFiles: Int
+            let unreadableFiles: Int
+            let oversizedLines: Int
+            let bytesRead: Int
+
+            enum CodingKeys: String, CodingKey {
+                case scannedFiles = "scanned_files"
+                case skippedFiles = "skipped_files"
+                case candidateScanCapped = "candidate_scan_capped"
+                case truncatedFiles = "truncated_files"
+                case unreadableFiles = "unreadable_files"
+                case oversizedLines = "oversized_lines"
+                case bytesRead = "bytes_read"
+            }
+        }
+
+        struct Findings: Encodable {
+            struct RepeatedReads: Encodable {
+                let repeatedTargets: Int
+                let redundantCalls: Int
+                let repeatedOutputBytes: Int
+
+                enum CodingKeys: String, CodingKey {
+                    case repeatedTargets = "repeated_targets"
+                    case redundantCalls = "redundant_calls"
+                    case repeatedOutputBytes = "repeated_output_bytes"
+                }
+            }
+
+            struct LargeOutputs: Encodable {
+                let calls: Int
+                let outputBytes: Int
+                let thresholdBytes: Int
+
+                enum CodingKeys: String, CodingKey {
+                    case calls
+                    case outputBytes = "output_bytes"
+                    case thresholdBytes = "threshold_bytes"
+                }
+            }
+
+            let repeatedReads: RepeatedReads
+            let largeOutputs: LargeOutputs
+
+            enum CodingKeys: String, CodingKey {
+                case repeatedReads = "repeated_reads"
+                case largeOutputs = "large_outputs"
+            }
+        }
+
+        struct Limits: Encodable {
+            let maxFiles: Int
+            let maxCandidateFiles: Int
+            let maxDirectoryEntries: Int
+            let maxFileBytes: Int
+            let maxTotalBytes: Int
+            let maxLineBytes: Int
+            let largeOutputThresholdBytes: Int
+
+            enum CodingKeys: String, CodingKey {
+                case maxFiles = "max_files"
+                case maxCandidateFiles = "max_candidate_files"
+                case maxDirectoryEntries = "max_directory_entries"
+                case maxFileBytes = "max_file_bytes"
+                case maxTotalBytes = "max_total_bytes"
+                case maxLineBytes = "max_line_bytes"
+                case largeOutputThresholdBytes = "large_output_threshold_bytes"
+            }
+        }
+
+        let generatedAt: Date
+        let source: String
+        let rangeDays: Int
+        let coverage: Coverage
+        let limits: Limits
+        let findings: Findings
+
+        enum CodingKeys: String, CodingKey {
+            case source, coverage, limits, findings
+            case generatedAt = "generated_at"
+            case rangeDays = "range_days"
+        }
+    }
+
     private enum CommandError: LocalizedError {
         case usage
         case invalidValue(String, String)
@@ -115,7 +204,7 @@ enum UsageQueryCLI {
         var errorDescription: String? {
             switch self {
             case .usage:
-                "Usage: ai-usage quota [--provider <name>] [--format text|json]\n       ai-usage report [--group day|provider|model|project|session] [--range 7d|30d|all] [--format text|json]"
+                "Usage: ai-usage quota [--provider <name>] [--format text|json]\n       ai-usage report [--group day|provider|model|project|session] [--range 7d|30d|all] [--format text|json]\n       ai-usage waste [--range 7d|30d] [--format text|json]"
             case .invalidValue(let option, let value): "Invalid value for \(option): \(value)."
             }
         }
@@ -140,6 +229,10 @@ enum UsageQueryCLI {
                 let result = TokenUsageReportScanner.scan()
                 let payload = reportPayload(result: result, grouping: options.grouping, range: options.range)
                 write(payload, format: options.format)
+                return 0
+            case "waste":
+                let result = TokenWasteScanner.scan(rangeDays: options.wasteRangeDays)
+                write(tokenWastePayload(result: result), format: options.format)
                 return 0
             default:
                 throw CommandError.usage
@@ -232,15 +325,55 @@ enum UsageQueryCLI {
         )
     }
 
+    static func tokenWastePayload(result: TokenWasteResult) -> TokenWastePayload {
+        let configured = TokenWasteResult.Limits.default
+        return TokenWastePayload(
+            generatedAt: result.generatedAt,
+            source: "claude_code_local_logs",
+            rangeDays: result.rangeDays,
+            coverage: .init(
+                scannedFiles: result.scannedFiles,
+                skippedFiles: result.skippedFiles,
+                candidateScanCapped: result.candidateScanCapped,
+                truncatedFiles: result.truncatedFiles,
+                unreadableFiles: result.unreadableFiles,
+                oversizedLines: result.oversizedLines,
+                bytesRead: result.bytesRead
+            ),
+            limits: .init(
+                maxFiles: configured.maxFiles,
+                maxCandidateFiles: configured.maxCandidateFiles,
+                maxDirectoryEntries: configured.maxDirectoryEntries,
+                maxFileBytes: configured.maxFileBytes,
+                maxTotalBytes: configured.maxTotalBytes,
+                maxLineBytes: configured.maxLineBytes,
+                largeOutputThresholdBytes: result.largeOutputs.thresholdBytes
+            ),
+            findings: .init(
+                repeatedReads: .init(
+                    repeatedTargets: result.repeatedReads.uniqueTargets,
+                    redundantCalls: result.repeatedReads.redundantCalls,
+                    repeatedOutputBytes: result.repeatedReads.repeatedOutputBytes
+                ),
+                largeOutputs: .init(
+                    calls: result.largeOutputs.calls,
+                    outputBytes: result.largeOutputs.outputBytes,
+                    thresholdBytes: result.largeOutputs.thresholdBytes
+                )
+            )
+        )
+    }
+
     private struct Options {
         var provider: Provider?
         var format: OutputFormat = .text
         var grouping: TokenUsageReportGrouping = .provider
         var range: TokenUsageReportRange = .sevenDays
+        var wasteRangeDays = 30
     }
 
     private static func parse(_ arguments: [String], command: String) throws -> Options {
-        guard command == "quota" || command == "report" else { throw CommandError.usage }
+        guard command == "quota" || command == "report" || command == "waste" else { throw CommandError.usage }
         var options = Options()
         var index = 0
         while index < arguments.count {
@@ -268,6 +401,12 @@ enum UsageQueryCLI {
                 case "7d", "7days", "7 days": options.range = .sevenDays
                 case "30d", "30days", "30 days": options.range = .thirtyDays
                 case "all", "all-time", "all time": options.range = .all
+                default: throw CommandError.invalidValue(key, value)
+                }
+            case "--range" where command == "waste":
+                switch value.lowercased() {
+                case "7d", "7days", "7 days": options.wasteRangeDays = 7
+                case "30d", "30days", "30 days": options.wasteRangeDays = 30
                 default: throw CommandError.invalidValue(key, value)
                 }
             default:
@@ -298,6 +437,7 @@ enum UsageQueryCLI {
         case .text:
             if let payload = payload as? QuotaPayload { printQuota(payload) }
             else if let payload = payload as? ReportPayload { printReport(payload) }
+            else if let payload = payload as? TokenWastePayload { printTokenWaste(payload) }
         }
     }
 
@@ -324,6 +464,17 @@ enum UsageQueryCLI {
             let cost = row.estimatedCostUSD.map { String(format: " · est. $%.4f", $0) } ?? ""
             print("\(row.title) · \(row.totalTokens) tokens (in \(row.inputTokens), out \(row.outputTokens), cache \(row.cacheTokens))\(cost)")
         }
+    }
+
+    private static func printTokenWaste(_ payload: TokenWastePayload) {
+        let repeated = payload.findings.repeatedReads
+        let large = payload.findings.largeOutputs
+        print("Potential token-waste signals · Claude Code · last \(payload.rangeDays) days")
+        print("Repeated reads: \(repeated.redundantCalls) extra calls across \(repeated.repeatedTargets) targets · \(repeated.repeatedOutputBytes.formatted()) repeated output bytes")
+        print("Large tool outputs: \(large.calls) results over \(large.thresholdBytes.formatted()) bytes · \(large.outputBytes.formatted()) bytes total")
+        print("Scan: \(payload.coverage.scannedFiles) files · \(payload.coverage.bytesRead.formatted()) bytes read · \(payload.coverage.truncatedFiles) truncated · \(payload.coverage.skippedFiles) skipped")
+        if payload.coverage.candidateScanCapped { print("File discovery stopped at the configured candidate limit.") }
+        print("These are review signals, not token or cost estimates. File paths, commands, session IDs, and log contents are not emitted.")
     }
 
     private static func fail(_ error: Error) -> Int32 {

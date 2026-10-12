@@ -30,7 +30,7 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 ## Tự động hoá và vận hành
 
 - [x] **CLI và JSON output:** `scripts/ai-usage quota` đọc snapshot cache, `report` tổng hợp log local theo nhóm/range; cả hai hỗ trợ text và JSON ổn định để tích hợp shell, tmux, Starship và script. Không refresh quota hay gọi model.
-- [ ] **Kiểm tra token-waste:** phân tích log cục bộ để phát hiện đọc file lặp hoặc output dư thừa; cần giới hạn dữ liệu và quyền truy cập rõ ràng.
+- [x] **Kiểm tra token-waste:** `scripts/ai-usage waste` đọc log Claude Code khi người dùng gọi rõ; tìm Read lặp và tool output lớn, không ước lượng token/chi phí. Giới hạn 7/30 ngày, 10.000 entry thư mục, 500 candidate, tối đa 100 file mới nhất trong số đó, 2 MiB/file, 64 MiB tổng, 1 MiB/line; không xuất hoặc lưu path, command, session ID hay nội dung log.
 - [ ] **Localization và cập nhật ứng dụng:** bổ sung ngôn ngữ, cơ chế cập nhật, ký/notarize và quy trình phát hành hoàn chỉnh.
 
 ## Nguyên tắc đánh giá
