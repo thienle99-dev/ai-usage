@@ -288,6 +288,8 @@ struct SettingsErrorText: View {
 
 struct GeneralSettingsView: View {
     var store: Bindable<UsageStore>
+    @State private var claudeStatusLineState: ClaudeStatusLineManager.State = .notInstalled
+    @State private var claudeStatusLineError: String?
 
     var body: some View {
         SettingsPage(title: "General", subtitle: "Configure your AI usage monitor.") {
@@ -329,6 +331,37 @@ struct GeneralSettingsView: View {
                     tooltip: "Only supported providers with verified reset signals are eligible.",
                     isOn: store.autoStartUsageWindow
                 )
+            }
+            SettingsSection(title: "CLI Integration") {
+                HStack(spacing: 10) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 16))
+                        .foregroundStyle(UsageTheme.claude)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Claude Code status line")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(UsageTheme.primaryText)
+                        Text(claudeStatusLineDescription)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 6)
+                    Button(claudeStatusLineButtonTitle) {
+                        toggleClaudeStatusLine()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(claudeStatusLineIsCustom)
+                }
+                .padding(.vertical, 7)
+                .frame(minHeight: 44)
+                if let claudeStatusLineError {
+                    SettingsRowDivider()
+                    SettingsErrorText(text: claudeStatusLineError)
+                        .padding(.vertical, 4)
+                }
             }
             SettingsSection(title: "Notifications") {
                 SettingsToggleRow(
@@ -411,6 +444,60 @@ struct GeneralSettingsView: View {
                 }
             }
         }
+        .onAppear(perform: refreshClaudeStatusLineState)
+    }
+
+    private var claudeStatusLineDescription: String {
+        switch claudeStatusLineState {
+        case .installed:
+            "Shows quota from the local cache. It never makes requests; Claude Code may need a restart."
+        case .customStatusLine:
+            "A custom status line is already configured. AI Usage Monitor will leave it untouched."
+        case .unavailable:
+            "Could not read Claude Code settings."
+        case .notInstalled:
+            "Show cached Claude quota in Claude Code. Installs only when no status line is configured."
+        }
+    }
+
+    private var claudeStatusLineButtonTitle: String {
+        if case .installed = claudeStatusLineState { return "Remove" }
+        return "Install"
+    }
+
+    private var claudeStatusLineIsCustom: Bool {
+        if case .customStatusLine = claudeStatusLineState { return true }
+        if case .unavailable = claudeStatusLineState { return true }
+        return false
+    }
+
+    private func refreshClaudeStatusLineState() {
+        claudeStatusLineState = ClaudeStatusLineManager.state(
+            settingsURL: ClaudeStatusLineManager.settingsURL(),
+            ownershipURL: ClaudeStatusLineManager.ownershipURL()
+        )
+    }
+
+    private func toggleClaudeStatusLine() {
+        let settingsURL = ClaudeStatusLineManager.settingsURL()
+        let ownershipURL = ClaudeStatusLineManager.ownershipURL()
+        do {
+            if case .installed = claudeStatusLineState {
+                try ClaudeStatusLineManager.uninstall(settingsURL: settingsURL, ownershipURL: ownershipURL)
+            } else {
+                let executableURL = Bundle.main.executableURL
+                    ?? URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL
+                try ClaudeStatusLineManager.install(
+                    executableURL: executableURL,
+                    settingsURL: settingsURL,
+                    ownershipURL: ownershipURL
+                )
+            }
+            claudeStatusLineError = nil
+        } catch {
+            claudeStatusLineError = error.localizedDescription
+        }
+        refreshClaudeStatusLineState()
     }
 }
 

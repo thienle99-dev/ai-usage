@@ -49,6 +49,18 @@ Use the bundled wrapper before a large CLI task. It reads the last local usage s
 
 Tasks estimated below 4,000 input tokens do not trigger a low-quota warning. For larger estimates, the wrapper compares the provider's most-used valid window with the warning threshold in Settings (70% by default). `run` asks for confirmation in an interactive terminal before launching the command; declining cancels it. If the snapshot is missing, older than 15 minutes, or marked with a local fetch error, the wrapper reports that quota could not be assessed and proceeds without a low-quota warning. Estimates are supplied by the caller; the wrapper does not inspect or store task prompts.
 
+## CLI status line
+
+In **Settings → General → CLI Integration**, install the Claude Code status line to show quota from the last local snapshot. It reads no credentials and makes no network or model requests. AI Usage Monitor installs only when Claude Code has no existing `statusLine` configuration; removal is enabled only while the configured command still matches the app's ownership record. Claude Code may need to be restarted after changing the setting.
+
+The formatter can also be used by compatible shell prompts and hooks:
+
+```sh
+./scripts/ai-usage statusline --provider Claude
+```
+
+Choose any supported provider name. Stale cached values are labeled `stale`; missing quota prints an unavailable message.
+
 ## Development notes
 
 - [Technical research and architecture plan](docs/TECHNICAL_PLAN.md)

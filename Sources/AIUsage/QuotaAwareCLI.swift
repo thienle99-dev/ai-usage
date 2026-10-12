@@ -41,8 +41,11 @@ enum QuotaAwareCLI {
     private enum Mode: String { case preflight, run }
 
     static func run(arguments: [String]) -> Int32 {
+        if arguments.first == "statusline" {
+            return CLIStatusLine.run(arguments: Array(arguments.dropFirst()))
+        }
         guard let modeName = arguments.first, let mode = Mode(rawValue: modeName) else {
-            writeError("Usage: ai-usage <preflight|run> --provider <name> --estimated-tokens <count> [-- command arguments…]\n")
+            writeError("Usage: ai-usage <preflight|run> --provider <name> --estimated-tokens <count> [-- command arguments…]\n       ai-usage statusline [--provider <name>]\n")
             return 64
         }
         do {

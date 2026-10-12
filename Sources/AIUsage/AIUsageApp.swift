@@ -7,7 +7,7 @@ import Darwin
 
     init() {
         let arguments = Array(CommandLine.arguments.dropFirst())
-        if arguments.first == "preflight" || arguments.first == "run" {
+        if ["preflight", "run", "statusline"].contains(arguments.first) {
             Darwin.exit(QuotaAwareCLI.run(arguments: arguments))
         }
         _store = State(initialValue: UsageStore())
