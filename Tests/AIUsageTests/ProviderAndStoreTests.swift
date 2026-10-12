@@ -36,6 +36,24 @@ private struct FixtureCodexSource: CodexAppServerDataSource {
     func read() async throws -> Data { data }
 }
 
+private actor MutableCodexSource: CodexAppServerDataSource {
+    private var data: Data
+    init(data: Data) { self.data = data }
+    func update(_ data: Data) { self.data = data }
+    func read() async throws -> Data { data }
+}
+
+private final class ScriptedMtimes: @unchecked Sendable {
+    private var values: [Date?]
+    private var index = 0
+    init(_ values: [Date?]) { self.values = values }
+    func next(_ path: String) -> Date? {
+        defer { index += 1 }
+        guard index < values.count else { return nil }
+        return values[index]
+    }
+}
+
 private actor FetchCounter {
     private(set) var value = 0
     func increment() { value += 1 }
@@ -260,6 +278,65 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .openCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
+    }
+
+    @MainActor
+    func testCodexSnapshotPersistsStableAccountID() async throws {
+        let fixture = Data(#"{"result":{"email":"codex@example.com","planType":"plus","rateLimits":{"primary":{"usedPercent":18,"windowDurationMins":300}}}}"#.utf8)
+        let store = UsageStore(
+            providers: [CodexProvider(source: FixtureCodexSource(data: fixture))],
+            defaults: isolatedDefaults(),
+            startImmediately: false
+        )
+        await store.refresh()
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "codex@example.com")
+        XCTAssertEqual(store.snapshots[.codex]?.account, "codex@example.com · plus")
+    }
+
+    @MainActor
+    func testCodexAccountSwitchReplacesSnapshotWholesale() async throws {
+        let accountA = Data(#"{"result":{"email":"a@example.com","rateLimits":{"primary":{"usedPercent":80,"windowDurationMins":300}}}}"#.utf8)
+        let accountB = Data(#"{"result":{"email":"b@example.com","rateLimits":{"secondary":{"usedPercent":10,"windowDurationMins":10080}}}}"#.utf8)
+        let source = MutableCodexSource(data: accountA)
+        let store = UsageStore(
+            providers: [CodexProvider(source: source)],
+            defaults: isolatedDefaults(),
+            startImmediately: false
+        )
+        await store.refresh()
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "a@example.com")
+        XCTAssertEqual(store.snapshots[.codex]?.windows.map(\.label), ["5-hour limit"])
+        await source.update(accountB)
+        await store.refresh()
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
+        XCTAssertEqual(store.snapshots[.codex]?.account, "b@example.com")
+        XCTAssertEqual(store.snapshots[.codex]?.windows.map(\.label), ["Weekly limit"])
+        XCTAssertNil(store.snapshots[.codex]?.error)
+    }
+
+    @MainActor
+    func testCodexAuthChangeDetectionBaselinesSettlesAndFires() async {
+        let base = Date(timeIntervalSince1970: 1_800_000_000)
+        let script = ScriptedMtimes([
+            base, base,
+            base.addingTimeInterval(100), base.addingTimeInterval(100), base.addingTimeInterval(100),
+            nil, nil,
+            base.addingTimeInterval(200),
+        ])
+        let store = UsageStore(
+            providers: [],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            fileModificationDate: { [script] path in script.next(path) }
+        )
+        XCTAssertFalse(store.codexAuthDidChange(now: base))
+        XCTAssertFalse(store.codexAuthDidChange(now: base))
+        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(101)))
+        XCTAssertTrue(store.codexAuthDidChange(now: base.addingTimeInterval(110)))
+        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(120)))
+        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(130)))
+        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(140)))
+        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(200)))
     }
 
     private func isolatedDefaults() -> UserDefaults {

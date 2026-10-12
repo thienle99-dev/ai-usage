@@ -69,6 +69,25 @@ final class ParserTests: XCTestCase {
         XCTAssertNotNil(result.windows[1].resetsAt)
     }
 
+    func testCodexAccountIdentityPrefersEmail() throws {
+        let data = Data(#"{"result":{"email":"a@example.com","account":{"account_id":"acct-123"},"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300}}}}"#.utf8)
+        let result = try UsageParsing.codex(data)
+        XCTAssertEqual(result.accountID, "a@example.com")
+    }
+
+    func testCodexAccountIdentityFallsBackToAccountID() throws {
+        let data = Data(#"{"result":{"account":{"account_id":"acct-123"},"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300}}}}"#.utf8)
+        let result = try UsageParsing.codex(data)
+        XCTAssertEqual(result.accountID, "acct-123")
+        XCTAssertNil(result.account)
+    }
+
+    func testCodexAccountIdentityIgnoresNumericIDsAndStaysNilWhenAbsent() throws {
+        let data = Data(#"{"id":3,"result":{"rateLimits":{"primary":{"usedPercent":19,"windowDurationMins":300}}}}"#.utf8)
+        let result = try UsageParsing.codex(data)
+        XCTAssertNil(result.accountID)
+    }
+
     func testMalformedAndMissingUsageFailClearly() {
         XCTAssertThrowsError(try UsageParsing.claude(Data("bad".utf8)))
         XCTAssertThrowsError(try UsageParsing.claude(Data("{}".utf8)))

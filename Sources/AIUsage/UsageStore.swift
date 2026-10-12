@@ -158,6 +158,61 @@ import ServiceManagement
         }
     }
 
+    /// Interval between `~/.codex/auth.json` mtime checks. A change only
+    /// *suggests* a folder swap; the next successful fetch's account identity
+    /// decides whether the account actually switched.
+    static let codexAuthCheckInterval: Duration = .seconds(30)
+    /// Fresh writes (token refreshes, mid-move copies) must settle before
+    /// triggering a fetch, so rapid rewrites don't cause refresh storms.
+    static let codexAuthSettleInterval: TimeInterval = 5
+
+    private nonisolated static func defaultCodexAuthFileURL() -> URL {
+        if let home = ProcessInfo.processInfo.environment["CODEX_HOME"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !home.isEmpty {
+            return URL(fileURLWithPath: (home as NSString).expandingTildeInPath, isDirectory: true)
+                .appendingPathComponent("auth.json", isDirectory: false)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/auth.json", isDirectory: false)
+    }
+
+    private nonisolated static func defaultModificationDate(for path: String) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate]) as? Date
+    }
+
+    /// Returns true when the Codex auth file changed and settled since the
+    /// last check. The first observation only baselines; missing files and
+    /// unsettled writes re-baseline without triggering, so a token refresh by
+    /// the CLI or a half-finished folder move never causes a spurious fetch.
+    func codexAuthDidChange(now: Date = .now) -> Bool {
+        let current = fileModificationDate(codexAuthFileURL.path)
+        guard let mtime = current else {
+            lastSeenCodexAuthMtime = nil
+            return false
+        }
+        guard let lastSeen = lastSeenCodexAuthMtime else {
+            lastSeenCodexAuthMtime = mtime
+            return false
+        }
+        guard mtime != lastSeen, now.timeIntervalSince(mtime) >= Self.codexAuthSettleInterval else { return false }
+        lastSeenCodexAuthMtime = mtime
+        return true
+    }
+
+    private func startCodexAuthWatcher() {
+        codexAuthWatcher?.cancel()
+        codexAuthWatcher = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.codexAuthCheckInterval)
+                guard !Task.isCancelled, let self else { return }
+                guard self.refreshPolicy != .manual else { continue }
+                if await self.codexAuthDidChange() {
+                    await self.refresh(provider: .codex)
+                }
+            }
+        }
+    }
+
     func setLaunchAtLogin(_ enabled: Bool) {
         launchAtLoginError = nil
         do {
