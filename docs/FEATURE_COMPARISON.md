@@ -17,10 +17,10 @@ CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác 
 | Claude usage | Gọi `GET /api/oauth/usage`, parser hỗ trợ các trường legacy, `limits[]` (`session`, `weekly_all`, `weekly_scoped`) và Usage credits | Gửi OAuth beta header; retry tối đa 2 lần khi gặp HTTP 429 và tôn trọng `Retry-After` (tối đa 30 giây). Live quota windows chưa xác nhận |
 | Codex usage | Tìm Codex CLI ở một số đường dẫn và gọi `account/read`, `account/rateLimits/read` qua JSON-RPC | Có timeout và parser cho response lồng nhau; live success chưa xác nhận |
 | Hiển thị usage | Progress bar, phần trăm, tên window, thời gian reset tương đối | Hiện có khi provider trả dữ liệu nhận diện được |
-| Làm mới | Làm mới bằng nút và chu kỳ cài đặt, mặc định 5 phút | Chu kỳ chọn được: 1, 5, 15 hoặc 30 phút |
+| Làm mới | Nút refresh và chu kỳ 1, 5, 10, 15 phút hoặc Manual only; mặc định 5 phút | Có. Manual only vẫn fetch một lần khi app khởi động, sau đó chỉ fetch theo thao tác người dùng |
 | Lỗi và cache | Giữ snapshot thành công gần nhất, hiển thị stale/error; lưu snapshot cục bộ | Có; không có lịch sử chuỗi snapshot |
-| Tuỳ chỉnh | Ẩn/hiện provider, ngưỡng cảnh báo và nghiêm trọng, giao diện sáng/tối/hệ thống, nhãn menu bar | Có trong Settings |
-| Phát triển | Swift Package Manager, parser tests, script tạo `.app`, README | Có; test hiện tập trung vào parser và status HTTP |
+| Tuỳ chỉnh | Ẩn/hiện provider, ngưỡng cảnh báo và nghiêm trọng, giao diện sáng/tối/hệ thống, bốn chế độ menu bar, launch at login | Có trong Settings |
+| Phát triển | Swift Package Manager, parser/provider/store tests, script tạo `.app`, README và technical plan | Có; live provider calls và UI appearance cần xác nhận trên máy đã đăng nhập |
 
 ## Khác biệt so với CodexBar
 
@@ -28,7 +28,7 @@ CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác 
 |---|---|---|
 | Số lượng provider | Nhiều provider cho coding plans, API billing, credits và gateways; danh sách cụ thể thay đổi theo phiên bản | Chỉ Claude Code và Codex |
 | Nguồn dữ liệu / xác thực | Tuỳ provider: CLI, OAuth, API key, browser cookie, local app/config hoặc dashboard | Chỉ OAuth credential Claude Code và local Codex app-server |
-| Tùy biến menu bar | Icon provider, nhãn, bars/percent, reset style, chọn usage cao nhất, gộp nhiều provider, xếp layout | Chỉ phần trăm cao nhất hoặc chữ “AI Usage” |
+| Tùy biến menu bar | Icon provider, nhãn, bars/percent, reset style, chọn usage cao nhất, gộp nhiều provider, xếp layout | Có icon only, phần trăm cao nhất, provider-specific hoặc critical-only; chưa có sắp xếp provider/layout tùy chỉnh |
 | Usage history | Lưu mẫu theo thời gian, biểu đồ và quota burndown cho provider hỗ trợ | Chỉ snapshot mới nhất và cache stale |
 | Spend / cost | Ước tính và báo cáo chi phí theo provider, model, session/project và thời gian; mức hỗ trợ tuỳ nguồn | Chỉ hiển thị Claude Usage credits (đã dùng / giới hạn) nếu API trả về; không có lịch sử chi phí, model/session breakdown hoặc thống kê token |
 | Dashboard bổ sung | Codex có thể bổ sung dữ liệu web như code review, breakdown và credits history | Không có nguồn dashboard hoặc số liệu bổ sung |
@@ -37,7 +37,7 @@ CodexBar là ứng dụng trưởng thành với nhiều provider, nguồn xác 
 | Trạng thái dịch vụ | Poll trạng thái provider, incident badge trên menu/icon | Chỉ báo lỗi của lần refresh cục bộ; không poll status page |
 | CLI và tự động hoá | CLI `codexbar` cho cấu hình, provider và một số cost commands | Không có CLI riêng |
 | Cấu hình | Cấu hình provider, API keys và tuỳ chọn có thể quản lý bằng CLI/config file | Preferences cơ bản lưu trong UserDefaults; không có import/export hay cấu hình CLI |
-| Trải nghiệm sản phẩm | Localization nhiều ngôn ngữ, launch-at-login, updater, tài liệu cài đặt/phát hành và cấu hình chi tiết | Chưa có localization, launch-at-login, updater hay quy trình phát hành hoàn chỉnh |
+| Trải nghiệm sản phẩm | Localization nhiều ngôn ngữ, launch-at-login, updater, tài liệu cài đặt/phát hành và cấu hình chi tiết | Có launch-at-login cơ bản và script app bundle; chưa có localization, updater, signing/notarization hay quy trình phát hành hoàn chỉnh |
 | An toàn / quyền riêng tư | Tài liệu hoá rõ nguồn đọc, quyền macOS và hành vi theo từng provider | Có nguyên tắc read-only và không lưu token trong README; chưa có trang quyền riêng tư/permission matrix chi tiết |
 
 CodexBar mô tả các nhóm này trong [README](https://github.com/steipete/CodexBar#readme), cùng [tài liệu Providers](https://github.com/steipete/CodexBar/blob/main/docs/providers.md), [Configuration](https://github.com/steipete/CodexBar/blob/main/docs/configuration.md), [Widgets](https://github.com/steipete/CodexBar/blob/main/docs/widgets.md), [CLI](https://github.com/steipete/CodexBar/blob/main/docs/cli.md), và [Refresh loop](https://github.com/steipete/CodexBar/blob/main/docs/refresh-loop.md). Repo CodexBar được cập nhật thường xuyên nên danh sách provider và khả năng có thể đổi.

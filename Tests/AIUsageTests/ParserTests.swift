@@ -6,8 +6,10 @@ final class ParserTests: XCTestCase {
         let data = Data(#"{"five_hour":{"utilization":120,"resets_at":"2026-10-12T12:00:00Z"},"seven_day":{"utilization":-4}}"#.utf8)
         let windows = try UsageParsing.claude(data)
         XCTAssertEqual(windows.count, 2)
-        XCTAssertEqual(windows[0].utilization, 100)
-        XCTAssertEqual(windows[1].utilization, 0)
+        XCTAssertEqual(windows[0].utilization, 120)
+        XCTAssertEqual(windows[1].utilization, -4)
+        XCTAssertNil(windows[0].validUtilization)
+        XCTAssertNil(windows[1].validUtilization)
         XCTAssertNotNil(windows[0].resetsAt)
     }
 
@@ -23,7 +25,7 @@ final class ParserTests: XCTestCase {
     func testClaudeLimitsArrayPayload() throws {
         let data = Data(#"{"limits":[{"kind":"session","group":"session","percent":5,"is_active":true},{"kind":"weekly_all","group":"weekly","percent":14,"resets_at":"2026-10-19T10:00:00Z","is_active":false},{"kind":"weekly_scoped","group":"weekly","percent":16,"scope":{"model":{"display_name":"Fable"}}}]}"#.utf8)
         let windows = try UsageParsing.claude(data)
-        XCTAssertEqual(windows.map(\.label), ["Session", "Weekly", "Fable weekly"])
+        XCTAssertEqual(windows.map(\.label), ["5-hour limit", "Weekly limit", "Fable weekly"])
         XCTAssertEqual(windows.map(\.utilization), [5, 14, 16])
         XCTAssertNotNil(windows[1].resetsAt)
     }
@@ -55,14 +57,14 @@ final class ParserTests: XCTestCase {
     func testCodexDurationSelection() throws {
         let data = Data(#"{"result":{"email":"a@example.com","rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300},"secondary":{"usedPercent":60,"windowDurationMins":10080}}}}"#.utf8)
         let result = try UsageParsing.codex(data)
-        XCTAssertEqual(result.windows.map(\.label), ["Session", "Weekly"])
+        XCTAssertEqual(result.windows.map(\.label), ["5-hour limit", "Weekly limit"])
         XCTAssertEqual(result.account, "a@example.com")
     }
 
     func testCodexNestedRateLimitsResponse() throws {
         let data = Data(#"{"id":3,"result":{"rateLimits":{"rateLimits":{"primary":{"usedPercent":19,"windowDurationMins":300,"resetsAt":1791806400},"secondary":{"usedPercent":48,"windowDurationMins":10080,"resetsAt":1792152000}},"rateLimitsByLimitId":{}}}}"#.utf8)
         let result = try UsageParsing.codex(data)
-        XCTAssertEqual(result.windows.map(\.label), ["Session", "Weekly"])
+        XCTAssertEqual(result.windows.map(\.label), ["5-hour limit", "Weekly limit"])
         XCTAssertEqual(result.windows.map(\.utilization), [19, 48])
         XCTAssertNotNil(result.windows[1].resetsAt)
     }
@@ -71,6 +73,28 @@ final class ParserTests: XCTestCase {
         XCTAssertThrowsError(try UsageParsing.claude(Data("bad".utf8)))
         XCTAssertThrowsError(try UsageParsing.claude(Data("{}".utf8)))
         XCTAssertThrowsError(try UsageParsing.codex(Data("{}".utf8)))
+    }
+
+    func testInvalidSourcePercentIsPreservedButUnavailableForDisplay() throws {
+        let data = Data(#"{"five_hour":{"utilization":143}}"#.utf8)
+        let window = try XCTUnwrap(UsageParsing.claude(data).first)
+        XCTAssertEqual(window.utilization, 143)
+        XCTAssertNil(window.validUtilization)
+    }
+
+    func testUsageAggregationUsesMaximumValidEnabledWindow() {
+        let codex = UsageSnapshot(provider: .codex, windows: [
+            UsageWindow(label: "Session", utilization: 35, resetsAt: nil),
+            UsageWindow(label: "Weekly", utilization: 61, resetsAt: nil),
+            UsageWindow(label: "Invalid", utilization: 120, resetsAt: nil)
+        ], account: nil, lastSuccess: .now)
+        let claude = UsageSnapshot(provider: .claude, windows: [
+            UsageWindow(label: "Session", utilization: 42, resetsAt: nil)
+        ], account: nil, lastSuccess: .now)
+        let snapshots: [Provider: UsageSnapshot] = [.codex: codex, .claude: claude]
+        XCTAssertEqual(UsageAggregation.maximum(in: snapshots, enabled: [.codex, .claude]), 61)
+        XCTAssertEqual(UsageAggregation.maximum(for: .claude, in: snapshots, enabled: [.claude]), 42)
+        XCTAssertNil(UsageAggregation.maximum(for: .claude, in: snapshots, enabled: [.codex]))
     }
 
     func testHTTPFailureDescriptions() {

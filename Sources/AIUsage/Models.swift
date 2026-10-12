@@ -1,34 +1,171 @@
 import Foundation
 
-enum Provider: String, Codable, CaseIterable, Identifiable {
+enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case claude = "Claude"
     case codex = "Codex"
+
     var id: String { rawValue }
+    var displayName: String { self == .claude ? "Claude Code" : "Codex" }
+    var shortName: String { self == .claude ? "A" : "C" }
+    var systemImage: String { self == .claude ? "sparkles" : "terminal.fill" }
 }
 
-struct UsageWindow: Codable, Identifiable {
-    var id: String { label }
+enum ProviderStatus: String, Codable, Sendable {
+    case connected
+    case authenticationRequired
+    case rateLimited
+    case unavailable
+    case error
+
+    var title: String {
+        switch self {
+        case .connected: "Connected"
+        case .authenticationRequired: "Authentication required"
+        case .rateLimited: "Rate limited"
+        case .unavailable: "Data unavailable"
+        case .error: "Error"
+        }
+    }
+}
+
+enum RefreshPolicy: String, CaseIterable, Identifiable, Codable, Sendable {
+    case oneMinute
+    case fiveMinutes
+    case tenMinutes
+    case fifteenMinutes
+    case manual
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .oneMinute: "1 minute"
+        case .fiveMinutes: "5 minutes"
+        case .tenMinutes: "10 minutes"
+        case .fifteenMinutes: "15 minutes"
+        case .manual: "Manual only"
+        }
+    }
+    var interval: Duration? {
+        switch self {
+        case .oneMinute: .seconds(60)
+        case .fiveMinutes: .seconds(300)
+        case .tenMinutes: .seconds(600)
+        case .fifteenMinutes: .seconds(900)
+        case .manual: nil
+        }
+    }
+
+    init(legacyInterval: Int) {
+        switch legacyInterval {
+        case 0: self = .manual
+        case 0..<180: self = .oneMinute
+        case 180..<450: self = .fiveMinutes
+        case 450..<750: self = .tenMinutes
+        default: self = .fifteenMinutes
+        }
+    }
+}
+
+enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
+    case iconOnly
+    case combinedUsage
+    case providerSpecific
+    case criticalProviderOnly
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .iconOnly: "Icon only"
+        case .combinedUsage: "Combined usage"
+        case .providerSpecific: "Provider-specific"
+        case .criticalProviderOnly: "Critical provider only"
+        }
+    }
+
+    init(legacyValue: String) {
+        switch legacyValue {
+        case "App name": self = .iconOnly
+        default: self = .combinedUsage
+        }
+    }
+}
+
+enum ProviderFilter: String, CaseIterable, Identifiable {
+    case all, codex, claude
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .all: "All"
+        case .codex: "Codex"
+        case .claude: "Claude"
+        }
+    }
+    var provider: Provider? {
+        switch self {
+        case .all: nil
+        case .codex: .codex
+        case .claude: .claude
+        }
+    }
+}
+
+struct UsageWindow: Codable, Identifiable, Sendable {
     let label: String
+    /// Provider-reported consumed percentage. Invalid source values are kept
+    /// for diagnostics but excluded from presentation and aggregation.
     let utilization: Double
     let resetsAt: Date?
     var detail: String? = nil
+
+    var id: String { label }
+    var validUtilization: Double? {
+        utilization.isFinite && (0...100).contains(utilization) ? utilization : nil
+    }
 }
 
-struct UsageSnapshot: Codable, Identifiable {
+struct UsageSnapshot: Codable, Identifiable, Sendable {
     var id: String { provider.rawValue }
     let provider: Provider
     var windows: [UsageWindow]
     var account: String?
     var lastSuccess: Date
     var error: String?
+    var status: ProviderStatus? = .connected
+
     var isStale: Bool { error != nil }
+    var validWindows: [UsageWindow] { windows.filter { $0.validUtilization != nil } }
 }
 
-enum ProviderFailure: LocalizedError {
-    case credentials(String), http(Int), invalidResponse(String), process(String)
+enum UsageAggregation {
+    static func maximum(in snapshots: [Provider: UsageSnapshot], enabled: Set<Provider>) -> Double? {
+        snapshots.values
+            .filter { enabled.contains($0.provider) }
+            .flatMap(\.validWindows)
+            .compactMap(\.validUtilization)
+            .max()
+    }
+
+    static func maximum(for provider: Provider, in snapshots: [Provider: UsageSnapshot], enabled: Set<Provider>) -> Double? {
+        guard enabled.contains(provider), let snapshot = snapshots[provider] else { return nil }
+        return snapshot.validWindows.compactMap(\.validUtilization).max()
+    }
+}
+
+enum ProviderFailure: LocalizedError, Sendable {
+    case credentials(String), http(Int), invalidResponse(String), process(String), network(String)
+
+    var status: ProviderStatus {
+        switch self {
+        case .credentials, .http(401), .http(403): .authenticationRequired
+        case .http(429): .rateLimited
+        case .invalidResponse: .unavailable
+        case .http, .process, .network: .error
+        }
+    }
+
     var errorDescription: String? {
         switch self {
-        case .credentials(let s), .invalidResponse(let s), .process(let s): s
+        case .credentials(let message), .invalidResponse(let message), .process(let message), .network(let message): message
         case .http(401), .http(403): "Authentication expired or access was denied."
         case .http(429): "Rate limited. Try again later."
         case .http(let code): "Service returned HTTP \(code)."
@@ -70,21 +207,19 @@ enum UsageParsing {
             ?? (root["rateLimits"] as? [String: Any])
             ?? root
         var result: [UsageWindow] = []
-        for (key, label) in [("five_hour", "Session"), ("seven_day", "Weekly"), ("seven_day_sonnet", "Sonnet weekly"), ("seven_day_opus", "Opus weekly")] {
+        for (key, label) in [("five_hour", "5-hour limit"), ("seven_day", "Weekly limit"), ("seven_day_sonnet", "Sonnet weekly"), ("seven_day_opus", "Opus weekly")] {
             guard let item = source[key] as? [String: Any],
                   let amount = number(item["utilization"] ?? item["used_percentage"] ?? item["usedPercentage"]) else { continue }
-            result.append(UsageWindow(label: label, utilization: min(100, max(0, amount)), resetsAt: date(item["resets_at"] ?? item["resetsAt"])))
+            result.append(UsageWindow(label: label, utilization: amount, resetsAt: date(item["resets_at"] ?? item["resetsAt"])))
         }
-        // Newer usage responses may report normalized `limits` records instead
-        // of the legacy five_hour/seven_day fields.
         if let limits = limitItems(root["limits"]) {
             for (limit, keyedKind) in limits {
                 guard let amount = number(limit["percent"] ?? limit["utilization"]) else { continue }
                 let kind = (limit["kind"] as? String) ?? (limit["group"] as? String) ?? keyedKind ?? ""
                 let label: String
                 switch kind {
-                case "session": label = "Session"
-                case "weekly_all", "weekly": label = "Weekly"
+                case "session": label = "5-hour limit"
+                case "weekly_all", "weekly": label = "Weekly limit"
                 case "weekly_scoped":
                     let scope = limit["scope"] as? [String: Any]
                     let model = scope?["model"] as? [String: Any]
@@ -93,7 +228,7 @@ enum UsageParsing {
                 default: continue
                 }
                 if result.contains(where: { $0.label == label }) { continue }
-                result.append(UsageWindow(label: label, utilization: min(100, max(0, amount)), resetsAt: date(limit["resets_at"] ?? limit["resetsAt"])))
+                result.append(UsageWindow(label: label, utilization: amount, resetsAt: date(limit["resets_at"] ?? limit["resetsAt"])))
             }
         }
         if let extraUsage = root["extra_usage"] as? [String: Any],
@@ -102,11 +237,10 @@ enum UsageParsing {
            let limit = number(extraUsage["monthly_limit"]), limit > 0 {
             let percent = number(extraUsage["utilization"]) ?? (used / limit * 100)
             let currency = (extraUsage["currency"] as? String) ?? "USD"
-            // OAuth `extra_usage` reports monetary amounts in minor units
-            // (for USD, cents), while `utilization` is already a percentage.
-            let amountDescription = "\(money(used / 100, currency: currency)) / \(money(limit / 100, currency: currency))"
+            // OAuth extra_usage amounts are minor units (cents for USD).
+            let detail = "\(money(used / 100, currency: currency)) / \(money(limit / 100, currency: currency))"
             if !result.contains(where: { $0.label == "Usage credits" }) {
-                result.append(UsageWindow(label: "Usage credits", utilization: min(100, max(0, percent)), resetsAt: nil, detail: amountDescription))
+                result.append(UsageWindow(label: "Usage credits", utilization: percent, resetsAt: nil, detail: detail))
             }
         }
         let hasUsageSchema = ["five_hour", "seven_day", "limits", "extra_usage"].contains { root[$0] != nil }
@@ -142,9 +276,11 @@ enum UsageParsing {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderFailure.invalidResponse("Codex returned malformed usage data.")
         }
-        // app-server account/rateLimits replies have evolved; accept either a direct object or a JSON-RPC result.
         let value = (root["result"] as? [String: Any]) ?? root
-        let account = (value["email"] as? String) ?? (value["account"] as? [String: Any])?["email"] as? String
+        let accountObject = value["account"] as? [String: Any]
+        let email = (value["email"] as? String) ?? (accountObject?["email"] as? String)
+        let plan = (value["planType"] as? String) ?? (accountObject?["planType"] as? String)
+        let account = [email, plan.map(friendlyPlan)].compactMap { $0 }.joined(separator: " · ")
         let response = (value["rateLimits"] as? [String: Any])
             ?? (value["rate_limits"] as? [String: Any])
             ?? value
@@ -157,16 +293,20 @@ enum UsageParsing {
         if limitSets.isEmpty { limitSets.append(response) }
         var windows: [UsageWindow] = []
         for limits in limitSets {
-            for (key, fallbackLabel) in [("primary", "5 hour"), ("secondary", "Weekly")] {
+            for (key, fallbackLabel) in [("primary", "5-hour limit"), ("secondary", "Weekly limit")] {
                 guard let item = limits[key] as? [String: Any], let amount = number(item["usedPercent"] ?? item["used_percent"]) else { continue }
                 var duration = number(item["windowDurationMins"] ?? item["window_duration_mins"])
                 if duration == nil, let seconds = number(item["windowDurationSeconds"] ?? item["window_duration_seconds"]) { duration = (seconds + 59) / 60 }
-                let resolvedLabel = duration.map { $0 >= 8_640 ? "Weekly" : ($0 >= 180 ? "Session" : fallbackLabel) } ?? fallbackLabel
-                windows.append(UsageWindow(label: resolvedLabel, utilization: min(100, max(0, amount)), resetsAt: date(item["resetsAt"] ?? item["resets_at"])))
+                let label = duration.map { $0 >= 8_640 ? "Weekly limit" : ($0 >= 180 ? "5-hour limit" : fallbackLabel) } ?? fallbackLabel
+                windows.append(UsageWindow(label: label, utilization: amount, resetsAt: date(item["resetsAt"] ?? item["resets_at"])))
             }
         }
         guard !windows.isEmpty else { throw ProviderFailure.invalidResponse("Codex returned no recognized rate limits.") }
-        return (windows, account)
+        // Keep one row per semantic window when rateLimits and the by-ID
+        // compatibility view both contain the same pool.
+        var unique: [String: UsageWindow] = [:]
+        for window in windows { unique[window.label] = window }
+        return (Array(unique.values).sorted { $0.label < $1.label }, account.isEmpty ? nil : account)
     }
 
     private static func number(_ value: Any?) -> Double? { (value as? NSNumber)?.doubleValue }
