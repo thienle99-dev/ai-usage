@@ -197,9 +197,12 @@ struct UsagePopover: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(shownProviders) { provider in
-                            ProviderUsageCard(provider: provider, layout: activeLayout) {
-                                Task { await store.refresh(provider: provider) }
-                            }
+                            ProviderUsageCard(
+                                provider: provider,
+                                layout: activeLayout,
+                                retry: { Task { await store.refresh(provider: provider) } },
+                                manageAccounts: { presentSettingsWindow(tab: "Providers") }
+                            )
                         }
                     }
                     .padding(.vertical, 1)
@@ -374,11 +377,16 @@ struct UsagePopover: View {
         .padding(.top, 2)
     }
 
-    private func presentSettingsWindow() {
+    private func presentSettingsWindow(tab: String = "General") {
+        UserDefaults.standard.set(tab, forKey: "settingsSelectedTab")
+        NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "settings")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate(ignoringOtherApps: true)
-            NSApp.windows.first(where: { $0.title == "Settings" })?.makeKeyAndOrderFront(nil)
+            guard let window = NSApp.windows.first(where: { $0.title == "Settings" }) else { return }
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFrontRegardless()
+            window.makeKeyAndOrderFront(nil)
         }
     }
 }
@@ -391,6 +399,7 @@ private struct ProviderUsageCard: View {
     let provider: Provider
     let layout: UsageCardLayout
     let retry: () -> Void
+    let manageAccounts: () -> Void
 
     private var snapshot: UsageSnapshot? { store.snapshots[provider] }
     private var status: ProviderStatus { store.status(for: provider) }
@@ -410,9 +419,11 @@ private struct ProviderUsageCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if layout == .collapsible {
-                Button { toggleExpanded() } label: {
+                HStack(spacing: 7) {
+                    Button { toggleExpanded() } label: {
                     HStack(spacing: 8) {
-                        providerHeader
+                        providerIdentity
+                        ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
                         Spacer(minLength: 3)
                         if let primaryWindow, let amount = primaryWindow.validUtilization {
                             Text("\(Int(amount.rounded()))%")
@@ -423,10 +434,12 @@ private struct ProviderUsageCard: View {
                             .font(.system(size: 10, weight: .semibold)).foregroundStyle(UsageTheme.mutedText)
                     }
                     .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(provider.displayName), \(isExpanded ? "expanded" : "collapsed")")
+                    .accessibilityHint("Toggles usage details")
+                    if provider == .codex { codexAccountSwitcher }
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("\(provider.displayName), \(isExpanded ? "expanded" : "collapsed")")
-                .accessibilityHint("Toggles usage details")
                 if snapshot?.windows.isEmpty == true {
                     emptyState(for: snapshot)
                 } else if isExpanded {
@@ -438,6 +451,13 @@ private struct ProviderUsageCard: View {
             } else {
                 providerHeader
                 metricContent(for: layout)
+            }
+
+            if provider == .codex, let error = store.codexSwitchError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(UsageTheme.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if let snapshot, snapshot.isStale {
@@ -456,6 +476,15 @@ private struct ProviderUsageCard: View {
 
     private var providerHeader: some View {
         HStack(spacing: 9) {
+            providerIdentity
+            Spacer(minLength: 4)
+            ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
+            if provider == .codex { codexAccountSwitcher }
+        }
+    }
+
+    private var providerIdentity: some View {
+        HStack(spacing: 9) {
             Image(systemName: provider.systemImage)
                 .font(.system(size: layout == .minimalRows ? 12 : 13, weight: .semibold))
                 .foregroundStyle(UsageTheme.provider(provider))
@@ -467,9 +496,72 @@ private struct ProviderUsageCard: View {
                     Text(account).font(.system(size: 10.5)).foregroundStyle(UsageTheme.secondaryText).lineLimit(1).truncationMode(.middle)
                 }
             }
-            Spacer(minLength: 4)
-            ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
         }
+    }
+
+    private var codexAccountSwitcher: some View {
+        let isBusy = store.codexSwitchInFlight || store.refreshing.contains(.codex)
+        let canIdentifyActiveHome = store.codexHomes.contains(where: store.isCodexHomeActive)
+
+        return Menu {
+            if let currentAccount = snapshot?.account, !currentAccount.isEmpty {
+                Button {
+                } label: {
+                    Label("Current · \(currentAccount)", systemImage: "checkmark")
+                }
+                .disabled(true)
+            } else {
+                Button {
+                } label: {
+                    Label("Current Codex account", systemImage: "checkmark")
+                }
+                .disabled(true)
+            }
+            Divider()
+
+            if store.codexHomes.isEmpty {
+                Button("Add account folders in Settings…", action: manageAccounts)
+            } else if !canIdentifyActiveHome {
+                Button("Current home must be registered in Settings") {}.disabled(true)
+                ForEach(store.codexHomes) { home in
+                    Button(home.displayName) {}.disabled(true)
+                }
+            } else {
+                ForEach(store.codexHomes.filter { !store.isCodexHomeActive($0) }) { home in
+                    Button {
+                        Task { await store.switchCodexAccount(to: home) }
+                    } label: {
+                        Text(home.displayName)
+                    }
+                    .disabled(isBusy)
+                }
+                if store.codexHomes.allSatisfy(store.isCodexHomeActive) {
+                    Button("No other registered accounts") {}.disabled(true)
+                }
+            }
+            Divider()
+            Button("Manage Accounts…", action: manageAccounts)
+        } label: {
+            HStack(spacing: 3) {
+                if store.codexSwitchInFlight {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "person.crop.circle")
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(UsageTheme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(isBusy)
+        .help("Switch Codex account")
+        .accessibilityLabel("Switch Codex account")
+        .accessibilityHint("Choose a registered Codex home or manage accounts in Settings")
     }
 
     @ViewBuilder private func metricContent(for layout: UsageCardLayout) -> some View {
@@ -757,7 +849,7 @@ private struct QuietIconButtonStyle: ButtonStyle {
 
 struct SettingsWindowView: View {
     @Environment(UsageStore.self) private var store
-    @State private var selection = "General"
+    @AppStorage("settingsSelectedTab") private var selection = "General"
     @State private var cursorCookieHeader = ""
     @State private var cursorCredentialMessage: String?
     @State private var cursorHasStoredCookie = CursorCredentialVault.hasStoredCookie
