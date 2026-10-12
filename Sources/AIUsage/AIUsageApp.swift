@@ -447,6 +447,10 @@ private struct ProviderUsageCard: View {
                 metricContent(for: layout)
             }
 
+            ForEach(store.publicServiceIncidents[provider] ?? []) { incident in
+                ServiceIncidentNotice(incident: incident)
+            }
+
             if provider == .codex, let error = store.codexSwitchError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5))
@@ -457,7 +461,7 @@ private struct ProviderUsageCard: View {
             if let snapshot, snapshot.isStale {
                 HStack(alignment: .top, spacing: 5) {
                     Image(systemName: "clock.arrow.circlepath")
-                    Text("Stale · \(snapshot.error ?? "Refresh failed")")
+                    Text("Local fetch failed · \(snapshot.error ?? "Refresh failed")")
                         .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 }
                 .font(.system(size: 10.5)).foregroundStyle(UsageTheme.warning)
@@ -615,7 +619,9 @@ private struct ProviderUsageCard: View {
     @ViewBuilder private func emptyState(for snapshot: UsageSnapshot?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if let snapshot, let error = snapshot.error {
-                Text(error).font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText).fixedSize(horizontal: false, vertical: true)
+                Text("Local usage fetch failed · \(error)")
+                    .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if snapshot != nil {
                 Text("Usage data unavailable").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
             } else {
@@ -827,6 +833,47 @@ struct ConnectionStatusView: View {
                 .foregroundStyle(UsageTheme.secondaryText)
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct ServiceIncidentNotice: View {
+    let incident: ServiceIncident
+
+    private var tint: Color {
+        switch incident.impact.lowercased() {
+        case "critical", "outage", "service outage": UsageTheme.critical
+        case "major", "service disruption": UsageTheme.warning
+        default: UsageTheme.warning
+        }
+    }
+
+    var body: some View {
+        Link(destination: incident.url) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .padding(.top, 1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Service incident · \(incident.title)")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(tint)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text("Public status page · \(incident.status)")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(UsageTheme.mutedText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Service incident: \(incident.title). Status: \(incident.status). Open public status page.")
     }
 }
 

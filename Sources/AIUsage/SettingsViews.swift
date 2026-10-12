@@ -696,6 +696,11 @@ struct ProvidersSettingsView: View {
         DisclosureGroup(isExpanded: expansionBinding(for: provider)) {
             VStack(alignment: .leading, spacing: 0) {
                 SettingsDetailRow(label: "Status", value: store.status(for: provider).title)
+                ForEach(store.publicServiceIncidents[provider] ?? []) { incident in
+                    SettingsRowDivider()
+                    ServiceIncidentNotice(incident: incident)
+                        .padding(.vertical, 7)
+                }
                 if let snapshot = store.snapshots[provider] {
                     if let account = snapshot.account {
                         SettingsRowDivider()
@@ -709,7 +714,7 @@ struct ProvidersSettingsView: View {
                         )
                     }
                     if let error = snapshot.error {
-                        Text(error)
+                        Text("Local usage fetch failed · \(error)")
                             .font(.system(size: 11))
                             .foregroundStyle(UsageTheme.warning)
                             .textSelection(.enabled)

@@ -5,8 +5,14 @@ import ServiceManagement
 @MainActor @Observable final class UsageStore {
     var snapshots: [Provider: UsageSnapshot] = [:]
     var refreshing: Set<Provider> = []
+    var publicServiceIncidents: [Provider: [ServiceIncident]] = [:]
     var visibleProviders: Set<Provider> = Set(Provider.supported) {
-        didSet { defaults.set(visibleProviders.map(\.rawValue), forKey: "visibleProviders") }
+        didSet {
+            defaults.set(visibleProviders.map(\.rawValue), forKey: "visibleProviders")
+            if publicServiceStatusMonitoringEnabled {
+                Task { await refreshPublicServiceStatus(force: true) }
+            }
+        }
     }
     var selectedProvider: Provider? {
         didSet {
@@ -51,6 +57,10 @@ import ServiceManagement
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let cacheURL: URL
     @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private var publicServiceStatusTask: Task<Void, Never>?
+    @ObservationIgnored private var lastPublicServiceStatusRefresh: Date?
+    @ObservationIgnored private var publicServiceStatusRefreshInFlight = false
+    @ObservationIgnored private var publicServiceStatusMonitoringEnabled = false
     @ObservationIgnored private let codexAuthFileURL: URL
     @ObservationIgnored private let fileModificationDate: @Sendable (String) -> Date?
     @ObservationIgnored private let autoStartRunner: any UsageWindowStartCommandRunning
@@ -133,7 +143,16 @@ import ServiceManagement
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         schedule()
         startCodexAuthWatcher()
-        if startImmediately { Task { await self.refresh() } }
+        if startImmediately {
+            publicServiceStatusMonitoringEnabled = true
+            Task { await self.refresh() }
+            publicServiceStatusTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    await self?.refreshPublicServiceStatus(force: true)
+                    try? await Task.sleep(for: .seconds(300))
+                }
+            }
+        }
     }
 
     func refresh(provider requestedProvider: Provider? = nil) async {
@@ -322,6 +341,23 @@ import ServiceManagement
         if refreshing.contains(provider) { return snapshots[provider]?.status ?? .connected }
         guard let snapshot = snapshots[provider] else { return .unavailable }
         return snapshot.status ?? (snapshot.error == nil ? .connected : .error)
+    }
+
+    func refreshPublicServiceStatus(force: Bool = false) async {
+        guard !publicServiceStatusRefreshInFlight else { return }
+        if !force, let lastPublicServiceStatusRefresh,
+           Date.now.timeIntervalSince(lastPublicServiceStatusRefresh) < 300 { return }
+        guard !visibleProviders.isEmpty else { return }
+        publicServiceStatusRefreshInFlight = true
+        defer { publicServiceStatusRefreshInFlight = false }
+        lastPublicServiceStatusRefresh = .now
+        let refreshed = await PublicServiceStatus.fetch(for: visibleProviders)
+        for (provider, incidents) in refreshed {
+            publicServiceIncidents[provider] = incidents
+        }
+        for provider in Array(publicServiceIncidents.keys) where !visibleProviders.contains(provider) {
+            publicServiceIncidents[provider] = nil
+        }
     }
 
     // MARK: - Codex homes (folder-swap account switching)
