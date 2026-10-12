@@ -176,10 +176,6 @@ struct UsagePopover: View {
             store.visibleProviders.contains(provider) && (store.selectedProvider == nil || store.selectedProvider == provider)
         }
     }
-    private var lastSuccess: Date? {
-        store.snapshots.values.map(\.lastSuccess).filter { $0 != .distantPast }.max()
-    }
-
     var body: some View {
         VStack(spacing: 12) {
             header
@@ -268,12 +264,11 @@ struct UsagePopover: View {
                 .foregroundStyle(UsageTheme.secondaryText)
             VStack(alignment: .leading, spacing: 2) {
                 Text("AI Usage").font(.system(size: 16, weight: .semibold))
-                if store.isRefreshing {
-                    Text("Updating usage…").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
-                } else if let lastSuccess {
-                    Text("Updated \(lastSuccess, style: .relative)").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                if let lastRefresh = store.lastRefreshAttempt {
+                    Text("Updated at \(lastRefresh.formatted(date: .omitted, time: .shortened))")
+                        .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
                 } else {
-                    Text("Waiting for first update").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                    Text("Not refreshed yet").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
                 }
             }
             Spacer(minLength: 8)
@@ -529,6 +524,9 @@ private struct QuietIconButtonStyle: ButtonStyle {
 struct SettingsWindowView: View {
     @Environment(UsageStore.self) private var store
     @State private var selection = "General"
+    @State private var cursorCookieHeader = ""
+    @State private var cursorCredentialMessage: String?
+    @State private var cursorHasStoredCookie = CursorCredentialVault.hasStoredCookie
 
     var body: some View {
         @Bindable var store = store
@@ -629,11 +627,9 @@ struct SettingsWindowView: View {
                             Text(error).font(.caption).foregroundStyle(UsageTheme.warning).textSelection(.enabled)
                         }
                     }
-                    LabeledContent("Source", value: provider == .claude ? "Claude Code OAuth usage" : "Local Codex app-server")
+                    LabeledContent("Source", value: providerSource(provider))
                     HStack {
-                        Text(provider == .claude
-                             ? "Sign in with Claude Code to refresh. Credentials are read-only and never shown here."
-                             : "Sign in with Codex CLI or the ChatGPT app. AI Usage Monitor does not read Codex auth files.")
+                        Text(providerHelp(provider))
                             .font(.caption).foregroundStyle(.secondary)
                         Spacer()
                         Button("Refresh") { Task { await store.refresh(provider: provider) } }
@@ -641,19 +637,78 @@ struct SettingsWindowView: View {
                     }
                 }
             }
+            Section("Cursor session") {
+                Text("AI Usage Monitor reads Cursor.app's signed-in session locally and calls Cursor's usage summary. If that session is unavailable, you can supply a cursor.com session cookie as a fallback.")
+                    .font(.caption).foregroundStyle(.secondary)
+                SecureField("Optional cursor.com Cookie header", text: $cursorCookieHeader)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Label(cursorHasStoredCookie ? "Fallback cookie stored in macOS Keychain" : "Using Cursor.app session when available", systemImage: cursorHasStoredCookie ? "checkmark.shield" : "desktopcomputer")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Link("CodexBar Cursor source", destination: URL(string: "https://github.com/steipete/CodexBar/blob/main/docs/cursor.md")!)
+                    Button("Save cookie & refresh") { saveCursorCredentials() }
+                        .disabled(cursorCookieHeader.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if cursorHasStoredCookie {
+                        Button("Remove cookie", role: .destructive) { removeCursorCredentials() }
+                    }
+                }
+                if let cursorCredentialMessage {
+                    Text(cursorCredentialMessage).font(.caption).foregroundStyle(UsageTheme.secondaryText)
+                }
+                Text("Cursor's usage-summary endpoint is undocumented and may change. The billing-cycle end is shown when returned. Never paste a cookie into logs or screenshots.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding(18)
+    }
+
+    private func providerSource(_ provider: Provider) -> String {
+        switch provider {
+        case .claude: "Claude Code OAuth usage"
+        case .codex: "Local Codex app-server"
+        case .cursor: "Cursor session · usage-summary web API"
+        default: "Not integrated"
+        }
+    }
+
+    private func providerHelp(_ provider: Provider) -> String {
+        switch provider {
+        case .claude: "Sign in with Claude Code to refresh. Credentials are read-only and never shown here."
+        case .codex: "Sign in with Codex CLI or the ChatGPT app. AI Usage Monitor does not read Codex auth files."
+        case .cursor: "Cursor.app authentication is read-only. An optional web session cookie is stored in Keychain."
+        default: "Usage tracking is not integrated for this provider."
+        }
+    }
+
+    private func saveCursorCredentials() {
+        do {
+            try CursorCredentialVault.save(cookieHeader: cursorCookieHeader)
+            cursorCookieHeader = ""
+            cursorHasStoredCookie = true
+            cursorCredentialMessage = "Saved securely. Fetching Cursor usage…"
+            Task { await store.refresh(provider: .cursor) }
+        } catch {
+            cursorCredentialMessage = error.localizedDescription
+        }
+    }
+
+    private func removeCursorCredentials() {
+        CursorCredentialVault.delete()
+        cursorCookieHeader = ""
+        cursorHasStoredCookie = false
+        cursorCredentialMessage = "Saved Cursor cookie removed. Cursor.app session can still be used."
     }
 
     private var aboutSettings: some View {
         VStack(alignment: .leading, spacing: 12) {
             Image(systemName: "chart.bar.fill").font(.system(size: 30)).foregroundStyle(UsageTheme.secondaryText)
             Text("AI Usage Monitor").font(.title2.weight(.semibold))
-            Text("A native menu bar utility for Claude Code and Codex usage.")
+            Text("A native menu bar utility for Claude Code, Codex, and Cursor usage.")
                 .foregroundStyle(UsageTheme.secondaryText)
             Divider().overlay(UsageTheme.separator)
-            Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. These provider interfaces can change.")
+            Text("Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor usage uses its session-authenticated web API. Provider interfaces can change.")
                 .font(.callout).foregroundStyle(UsageTheme.secondaryText)
             Text("UI and integration references are MIT licensed: claude-usage-widget by bozdemir and codex-usage-bar by CMMUU.")
                 .font(.caption).foregroundStyle(UsageTheme.mutedText)

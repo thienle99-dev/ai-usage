@@ -25,6 +25,10 @@ The app discovers `codex` in common locations and `PATH`, starts `app-server`, a
 
 The local app-server protocol is not a stable public usage API; method names, startup behavior, and response shapes can change across Codex releases. The adapter is isolated in `Providers.swift` so protocol changes do not reach SwiftUI views.
 
+### Cursor
+
+Cursor uses the session-authenticated `GET /api/usage-summary` and `/api/auth/me` web endpoints described in CodexBar's current provider notes. The app reads Cursor.app's `cursorAuth/accessToken` from `state.vscdb` in SQLite read-only mode, validates JWT expiry and identity, and wraps it in Cursor's `WorkosCursorSessionToken` cookie. An optional user-supplied web cookie is kept in Keychain. The web endpoints are undocumented and compatibility-sensitive. See [CodexBar Cursor provider notes](https://github.com/steipete/CodexBar/blob/main/docs/cursor.md).
+
 ## UI patterns and architecture
 
 The Claude reference's compact provider hierarchy, progress bars, reset labels, and subdued status copy informed the reusable SwiftUI usage cards. This native app uses `MenuBarExtra`, a 380-point scrollable popover, provider filter, refresh/settings actions, semantic appearance-aware colors, and a native tabbed Settings window. macOS System Appearance is the default, with Light and Dark overrides.

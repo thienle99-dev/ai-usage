@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+import CSQLite3
 @testable import AIUsage
 
 private struct HTTPFixture: Sendable {
@@ -118,6 +119,44 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.windows.compactMap(\.validUtilization), [18, 54])
     }
 
+    func testCursorProviderUsesInjectedSessionAndUsageSummary() async throws {
+        let usage = Data(#"{"membershipType":"pro","billingCycleEnd":"2026-11-01T00:00:00Z","individualUsage":{"plan":{"used":600,"limit":6000,"totalPercentUsed":10}}}"#.utf8)
+        let account = Data(#"{"email":"cursor@example.com","name":"Cursor User"}"#.utf8)
+        let loader = FixtureHTTPDataLoader([HTTPFixture(status: 200, body: usage), HTTPFixture(status: 200, body: account)])
+        let provider = CursorProvider(loader: loader, sessionProvider: { CursorSession(cookieHeader: "WorkosCursorSessionToken=fixture", accountHint: nil) })
+        let snapshot = try await provider.fetch()
+        XCTAssertEqual(snapshot.provider, .cursor)
+        XCTAssertEqual(snapshot.account, "cursor@example.com · Pro")
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 10)
+        let requestCount = await loader.requestCount
+        XCTAssertEqual(requestCount, 2)
+    }
+
+    func testCursorAppAuthReadsAndValidatesTokenReadOnly() throws {
+        let databaseURL = FileManager.default.temporaryDirectory.appendingPathComponent("cursor-auth-\(UUID().uuidString).vscdb")
+        defer { try? FileManager.default.removeItem(at: databaseURL) }
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databaseURL.path, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT NOT NULL)", nil, nil, nil), SQLITE_OK)
+
+        let claims: [String: Any] = ["sub": "auth0|cursor-user", "email": "cursor@example.com", "exp": Date.now.addingTimeInterval(3600).timeIntervalSince1970]
+        let payloadData = try JSONSerialization.data(withJSONObject: claims)
+        let payload = payloadData.base64EncodedString().replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let token = "header.\(payload).signature"
+        var statement: OpaquePointer?
+        XCTAssertEqual(sqlite3_prepare_v2(database, "INSERT INTO ItemTable (key, value) VALUES (?, ?)", -1, &statement, nil), SQLITE_OK)
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, "cursorAuth/accessToken", -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        sqlite3_bind_text(statement, 2, token, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+
+        let session = try XCTUnwrap(CursorAppAuthStore(databaseURL: databaseURL).session())
+        XCTAssertEqual(session.cookieHeader, "WorkosCursorSessionToken=cursor-user%3A%3A\(token)")
+        XCTAssertEqual(session.accountHint, "cursor@example.com")
+    }
+
     @MainActor
     func testRefreshKeepsProvidersIndependentAndPreservesStaleSnapshot() async throws {
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("snapshots.json")
@@ -209,7 +248,7 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(Provider.allCases.map(\.shortName), [
             "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Windsurf", "Cline", "Roo", "OpenCode"
         ])
-        XCTAssertEqual(Provider.supported, [.codex, .claude])
+        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }

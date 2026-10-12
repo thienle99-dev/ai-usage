@@ -1,6 +1,8 @@
 import Foundation
 import Darwin
 import CryptoKit
+import Security
+import CSQLite3
 
 protocol UsageProvider: Sendable {
     var provider: Provider { get }
@@ -160,6 +162,192 @@ struct CodexProvider: UsageProvider {
     func fetch() async throws -> UsageSnapshot {
         let parsed = try UsageParsing.codex(await source.read())
         return UsageSnapshot(provider: .codex, windows: parsed.windows, account: parsed.account, lastSuccess: .now)
+    }
+}
+
+struct CursorSession: Sendable {
+    let cookieHeader: String
+    let accountHint: String?
+}
+
+/// Reads Cursor.app's existing access token without modifying its database.
+struct CursorAppAuthStore: Sendable {
+    private let databaseURL: URL
+
+    init(databaseURL: URL? = nil) {
+        self.databaseURL = databaseURL ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/Cursor/User/globalStorage/state.vscdb")
+    }
+
+    func session() throws -> CursorSession? {
+        guard FileManager.default.fileExists(atPath: databaseURL.path) else { return nil }
+        guard let token = try accessToken(), !token.isEmpty else { return nil }
+        let claims = try CursorJWT(token: token)
+        guard claims.expiresAt.timeIntervalSinceNow > 60 else { return nil }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        guard claims.userID.unicodeScalars.allSatisfy(allowed.contains) else {
+            throw ProviderFailure.credentials("Cursor.app session contains an invalid user ID. Sign in to Cursor again.")
+        }
+        return CursorSession(cookieHeader: "WorkosCursorSessionToken=\(claims.userID)%3A%3A\(token)", accountHint: claims.email)
+    }
+
+    private func accessToken() throws -> String? {
+        var database: OpaquePointer?
+        let result = sqlite3_open_v2(databaseURL.path, &database, SQLITE_OPEN_READONLY, nil)
+        guard result == SQLITE_OK, let database else {
+            if let database { sqlite3_close(database) }
+            throw ProviderFailure.credentials("Could not read Cursor.app's local session. Try a session cookie in Settings.")
+        }
+        defer { sqlite3_close(database) }
+        sqlite3_busy_timeout(database, 250)
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, "SELECT value FROM ItemTable WHERE key = ? LIMIT 1", -1, &statement, nil) == SQLITE_OK,
+              let statement else {
+            throw ProviderFailure.credentials("Cursor.app local session was not found. Sign in to Cursor or add a session cookie in Settings.")
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, "cursorAuth/accessToken", -1, cursorSQLiteTransient)
+        guard sqlite3_step(statement) == SQLITE_ROW else { return nil }
+        let type = sqlite3_column_type(statement, 0)
+        if type == SQLITE_TEXT, let pointer = sqlite3_column_text(statement, 0) {
+            return String(cString: pointer).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if type == SQLITE_BLOB, let pointer = sqlite3_column_blob(statement, 0) {
+            let data = Data(bytes: pointer, count: Int(sqlite3_column_bytes(statement, 0)))
+            return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                ?? String(data: data, encoding: .utf16LittleEndian)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+}
+
+private let cursorSQLiteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+private struct CursorJWT {
+    let userID: String
+    let email: String?
+    let expiresAt: Date
+
+    init(token: String) throws {
+        let parts = token.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2 else { throw ProviderFailure.credentials("Cursor.app returned an invalid session. Sign in to Cursor again.") }
+        var payload = String(parts[1]).replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let data = Data(base64Encoded: payload),
+              let claims = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let subject = claims["sub"] as? String,
+              let rawID = subject.split(separator: "|", omittingEmptySubsequences: true).last,
+              let expiration = claims["exp"] as? NSNumber else {
+            throw ProviderFailure.credentials("Cursor.app session is missing identity or expiry. Sign in to Cursor again.")
+        }
+        userID = String(rawID)
+        email = (claims["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        expiresAt = Date(timeIntervalSince1970: expiration.doubleValue)
+    }
+}
+
+/// Cursor usage is read from the same session-backed web API used by CodexBar.
+struct CursorProvider: UsageProvider {
+    let provider = Provider.cursor
+    private let loader: any HTTPDataLoading
+    private let sessionProvider: @Sendable () throws -> CursorSession
+
+    init(
+        loader: any HTTPDataLoading = URLSessionDataLoader(),
+        sessionProvider: @escaping @Sendable () throws -> CursorSession = { try CursorCredentialVault.session() }
+    ) {
+        self.loader = loader
+        self.sessionProvider = sessionProvider
+    }
+
+    func fetch() async throws -> UsageSnapshot {
+        let session = try sessionProvider()
+        var request = URLRequest(url: URL(string: "https://cursor.com/api/usage-summary")!)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(session.cookieHeader, forHTTPHeaderField: "Cookie")
+        request.timeoutInterval = 20
+
+        let data: Data
+        let response: URLResponse
+        do { (data, response) = try await loader.data(for: request) }
+        catch { throw ProviderFailure.network("Could not reach Cursor. Check your network and try again.") }
+        guard let http = response as? HTTPURLResponse else {
+            throw ProviderFailure.invalidResponse("No HTTP response from Cursor.")
+        }
+        guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
+        let profile = await fetchAccount(using: session.cookieHeader, with: loader)
+        let identity = profile ?? session.accountHint
+        let plan = UsageParsing.cursorPlan(data)
+        let account = [identity, plan].compactMap { $0 }.joined(separator: " · ")
+        let windows = try UsageParsing.cursor(data)
+        return UsageSnapshot(provider: .cursor, windows: windows, account: account.isEmpty ? nil : account, lastSuccess: .now)
+    }
+
+    private func fetchAccount(using cookie: String, with loader: any HTTPDataLoading) async -> String? {
+        var request = URLRequest(url: URL(string: "https://cursor.com/api/auth/me")!)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await loader.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return UsageParsing.cursorAccount(data) ?? nil
+    }
+}
+
+enum CursorCredentialVault {
+    private static let service = "com.aiusagemonitor.cursor-session"
+    private static let keyAccount = "manual-cookie-header"
+
+    static var hasStoredCookie: Bool {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: keyAccount,
+                                    kSecReturnData as String: false,
+                                    kSecMatchLimit as String: kSecMatchLimitOne]
+        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func save(cookieHeader: String) throws {
+        let value = cookieHeader.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.contains("=") else { throw ProviderFailure.credentials("Enter a valid Cursor session cookie header.") }
+        let data = Data(value.utf8)
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: keyAccount]
+        let update: [String: Any] = [kSecValueData as String: data]
+        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        if status == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = data
+            let addStatus = SecItemAdd(insert as CFDictionary, nil)
+            guard addStatus == errSecSuccess else { throw ProviderFailure.credentials("Could not save the Cursor cookie in Keychain.") }
+        } else if status != errSecSuccess {
+            throw ProviderFailure.credentials("Could not update the Cursor cookie in Keychain.")
+        }
+    }
+
+    static func delete() {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: keyAccount]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    static func session() throws -> CursorSession {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service,
+                                    kSecAttrAccount as String: keyAccount,
+                                    kSecReturnData as String: true,
+                                    kSecMatchLimit as String: kSecMatchLimitOne]
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data,
+           let cookie = String(data: data, encoding: .utf8), !cookie.isEmpty {
+            return CursorSession(cookieHeader: cookie, accountHint: nil)
+        }
+        if let session = try CursorAppAuthStore().session() { return session }
+        throw ProviderFailure.credentials("Sign in to Cursor.app or add a session cookie in Settings → Providers.")
     }
 }
 

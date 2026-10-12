@@ -58,8 +58,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .openCode: "chevron.left.forwardslash.chevron.right"
         }
     }
-    var isUsageSupported: Bool { self == .codex || self == .claude }
-    static let supported: [Provider] = [.codex, .claude]
+    var isUsageSupported: Bool { self == .codex || self == .claude || self == .cursor }
+    static let supported: [Provider] = [.codex, .claude, .cursor]
 }
 
 enum ProviderStatus: String, Codable, Sendable {
@@ -207,6 +207,96 @@ enum ProviderFailure: LocalizedError, Sendable {
 }
 
 enum UsageParsing {
+    static func cursor(_ data: Data) throws -> [UsageWindow] {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            throw ProviderFailure.invalidResponse("Cursor returned malformed usage data.")
+        }
+        guard let individual = root["individualUsage"] as? [String: Any] else {
+            throw ProviderFailure.invalidResponse("Cursor returned an unrecognized usage response.")
+        }
+        let plan = individual["plan"] as? [String: Any]
+        let reset = date(root["billingCycleEnd"])
+        let used = number(plan?["used"])
+        let limit = number(plan?["limit"])
+        let planDetail: String? = if let used, let limit, used >= 0, limit > 0 {
+            "\(currency(used / 100)) / \(currency(limit / 100)) included this cycle"
+        } else { nil }
+
+        var windows: [UsageWindow] = []
+        if let total = number(plan?["totalPercentUsed"]) {
+            windows.append(UsageWindow(label: "Plan usage", utilization: total, resetsAt: reset, detail: planDetail))
+        } else {
+            if let auto = number(plan?["autoPercentUsed"]) {
+                windows.append(UsageWindow(label: "Auto + Composer", utilization: auto, resetsAt: reset))
+            }
+            if let api = number(plan?["apiPercentUsed"]) {
+                windows.append(UsageWindow(label: "API models", utilization: api, resetsAt: reset))
+            }
+        }
+        if let auto = number(plan?["autoPercentUsed"]), number(plan?["totalPercentUsed"]) != nil {
+            windows.append(UsageWindow(label: "Auto + Composer", utilization: auto, resetsAt: reset))
+        }
+        if let api = number(plan?["apiPercentUsed"]), number(plan?["totalPercentUsed"]) != nil {
+            windows.append(UsageWindow(label: "API models", utilization: api, resetsAt: reset))
+        }
+
+        let onDemand = (individual["onDemand"] as? [String: Any])
+        let teamOnDemand = ((root["teamUsage"] as? [String: Any])?["onDemand"] as? [String: Any])
+        let onDemandUsed = ((onDemand?["enabled"] as? Bool) == true ? number(onDemand?["used"]) : nil)
+            ?? number(teamOnDemand?["used"])
+        let onDemandLimit = ((onDemand?["enabled"] as? Bool) == true ? number(onDemand?["limit"]) : nil)
+            ?? number(teamOnDemand?["limit"])
+        if let onDemandUsed, onDemandUsed >= 0 {
+            let percent = onDemandLimit.flatMap { $0 > 0 ? onDemandUsed / $0 * 100 : nil } ?? -1
+            let detail = onDemandLimit.map { "\(currency(onDemandUsed / 100)) / \(currency($0 / 100))" }
+                ?? "\(currency(onDemandUsed / 100)) spent this cycle"
+            windows.append(UsageWindow(label: "On-demand usage", utilization: percent, resetsAt: reset, detail: detail))
+        }
+
+        if windows.isEmpty {
+            let overall = individual["overall"] as? [String: Any]
+            let pooled = ((root["teamUsage"] as? [String: Any])?["pooled"] as? [String: Any])
+            let budget = overall ?? pooled
+            if let budget, let amount = number(budget["used"]), amount >= 0 {
+                let cap = number(budget["limit"])
+                let percent = cap.flatMap { $0 > 0 ? amount / $0 * 100 : nil } ?? -1
+                let detail = cap.map { "\(currency(amount / 100)) / \(currency($0 / 100)) this cycle" }
+                    ?? "\(currency(amount / 100)) spent this cycle"
+                windows.append(UsageWindow(label: overall == nil ? "Team pool" : "Account usage", utilization: percent, resetsAt: reset, detail: detail))
+            }
+        }
+
+        if windows.isEmpty, root["individualUsage"] == nil, root["teamUsage"] == nil {
+            throw ProviderFailure.invalidResponse("Cursor returned no recognized usage windows.")
+        }
+        return windows
+    }
+
+    static func cursorAccount(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let value = (root["user"] as? [String: Any]) ?? root
+        let email = (value["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = (value["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = [email, name].compactMap { $0 }.first(where: { !$0.isEmpty })
+        return identity
+    }
+
+    static func cursorPlan(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let plan = (root["membershipType"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !plan.isEmpty else { return nil }
+        return plan.capitalized
+    }
+
+    private static func currency(_ amount: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.currencyCode = "USD"
+        formatter.maximumFractionDigits = 2
+        return formatter.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
+    }
+
     static func claudeAccount(_ data: Data) -> String? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         let account = root["account"] as? [String: Any]

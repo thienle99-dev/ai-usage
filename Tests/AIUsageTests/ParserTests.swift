@@ -97,6 +97,30 @@ final class ParserTests: XCTestCase {
         XCTAssertNil(UsageAggregation.maximum(for: .claude, in: snapshots, enabled: [.codex]))
     }
 
+    func testCursorUsageSummaryMapsPlanBreakdownsAndReset() throws {
+        let data = Data(#"{"billingCycleStart":"2026-10-01T00:00:00Z","billingCycleEnd":"2026-11-01T00:00:00Z","membershipType":"pro","individualUsage":{"plan":{"used":2450,"limit":10000,"autoPercentUsed":6,"apiPercentUsed":3,"totalPercentUsed":5},"onDemand":{"enabled":true,"used":40,"limit":1000}}}"#.utf8)
+        let windows = try UsageParsing.cursor(data)
+        XCTAssertEqual(windows.map(\.label), ["Plan usage", "Auto + Composer", "API models", "On-demand usage"])
+        XCTAssertEqual(windows.map(\.validUtilization), [5, 6, 3, 4])
+        XCTAssertEqual(windows[0].detail, "$24.50 / $100.00 included this cycle")
+        XCTAssertEqual(windows[3].detail, "$0.40 / $10.00")
+        XCTAssertEqual(windows[0].resetsAt, ISO8601DateFormatter().date(from: "2026-11-01T00:00:00Z"))
+    }
+
+    func testCursorUsageWithoutPercentDoesNotInventOne() throws {
+        let data = Data(#"{"individualUsage":{"plan":{"used":0,"limit":0},"onDemand":{"enabled":false}},"teamUsage":{"onDemand":{"used":1200}}}"#.utf8)
+        let windows = try UsageParsing.cursor(data)
+        let onDemand = try XCTUnwrap(windows.first)
+        XCTAssertNil(onDemand.validUtilization)
+        XCTAssertEqual(onDemand.detail, "$12.00 spent this cycle")
+        XCTAssertNil(onDemand.resetsAt)
+    }
+
+    func testCursorUsageRejectsMalformedAndUnknownResponse() {
+        XCTAssertThrowsError(try UsageParsing.cursor(Data("{}".utf8)))
+        XCTAssertThrowsError(try UsageParsing.cursor(Data("not json".utf8)))
+    }
+
     func testHTTPFailureDescriptions() {
         XCTAssertEqual(ProviderFailure.http(429).errorDescription, "Rate limited. Try again later.")
         XCTAssertEqual(ProviderFailure.http(401).errorDescription, "Authentication expired or access was denied.")

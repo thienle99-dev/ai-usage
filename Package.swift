@@ -6,7 +6,8 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "AIUsage", targets: ["AIUsage"])],
     targets: [
-        .executableTarget(name: "AIUsage"),
-        .testTarget(name: "AIUsageTests", dependencies: ["AIUsage"])
+        .systemLibrary(name: "CSQLite3"),
+        .executableTarget(name: "AIUsage", dependencies: ["CSQLite3"]),
+        .testTarget(name: "AIUsageTests", dependencies: ["AIUsage", "CSQLite3"])
     ]
 )
