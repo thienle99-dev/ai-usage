@@ -9,6 +9,7 @@ export type Messages = {
   meta: { name: string; tagline: string; description: string };
   nav: {
     features: string;
+    cliGuide: string;
     providers: string;
     privacy: string;
     install: string;
@@ -71,6 +72,7 @@ const en: Messages = {
   },
   nav: {
     features: 'Features',
+    cliGuide: 'CLI guide',
     providers: 'Providers',
     privacy: 'Privacy',
     install: 'Install',
@@ -159,6 +161,10 @@ const en: Messages = {
       {
         title: 'Launch at login',
         detail: 'Starts with your Mac and refreshes on a schedule you choose: 1 to 15 minutes, or manual only.',
+      },
+      {
+        title: 'Terminal and JSON',
+        detail: 'Query cached quota or aggregate local Claude Code and Codex token logs from shell scripts, tmux, and Starship. JSON output has stable fields; quota queries never refresh providers.',
       },
     ],
   },
@@ -255,6 +261,7 @@ const vi: Messages = {
   },
   nav: {
     features: 'Tính năng',
+    cliGuide: 'Hướng dẫn CLI',
     providers: 'Providers',
     privacy: 'Riêng tư',
     install: 'Cài đặt',
@@ -343,6 +350,10 @@ const vi: Messages = {
       {
         title: 'Mở cùng máy',
         detail: 'Khởi động cùng macOS và refresh theo lịch bạn chọn: 1–15 phút hoặc chỉ thủ công.',
+      },
+      {
+        title: 'Terminal và JSON',
+        detail: 'Truy vấn quota cache hoặc tổng hợp log token Claude Code/Codex từ shell, tmux và Starship. JSON có field ổn định; lệnh quota không refresh provider.',
       },
     ],
   },

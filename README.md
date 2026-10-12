@@ -51,6 +51,35 @@ Use the bundled wrapper before a large CLI task. It reads the last local usage s
 
 Tasks estimated below 4,000 input tokens do not trigger a low-quota warning. For larger estimates, the wrapper compares the provider's most-used valid window with the warning threshold in Settings (70% by default). `run` asks for confirmation in an interactive terminal before launching the command; declining cancels it. If the snapshot is missing, older than 15 minutes, or marked with a local fetch error, the wrapper reports that quota could not be assessed and proceeds without a low-quota warning. Estimates are supplied by the caller; the wrapper does not inspect or store task prompts.
 
+## CLI quota and JSON reports
+
+Query quota cached by the app or generate a local token report from Claude Code and Codex logs:
+
+```sh
+./scripts/ai-usage quota --provider codex
+./scripts/ai-usage quota --format json | jq '.providers[].windows[] | {label, used_percent, resets_at}'
+./scripts/ai-usage report --group project --range 30d --format json
+```
+
+`quota` is read-only and uses the last app snapshot; it never refreshes providers or makes model requests. Omit `--provider` to print all supported providers, or pass a provider name/short name. Each provider includes a status, `stale` flag, account label, snapshot age and usage windows; each window has `used_percent`, `remaining_percent`, `resets_at` and detail when available. Missing percentages and dates are `null`/absent, never inferred. It exits with code `3` if the requested cache is unavailable. `report` scans local CLI logs only when invoked; `--group` accepts `day`, `provider`, `model`, `project` or `session`, and `--range` accepts `7d`, `30d` or `all`.
+
+JSON uses stable snake_case field names and ISO 8601 timestamps. Report rows include input, output, cache and total tokens; `estimated_cost_usd` is `null` when no source estimate exists, and `cost_is_estimate` identifies local estimates. For tmux, a compact text query can be used directly in a status line:
+
+```tmux
+set -g status-right '#(./scripts/ai-usage quota --provider codex)'
+```
+
+For Starship, expose the same cached query as a custom module:
+
+```toml
+[custom.ai_usage]
+command = "./scripts/ai-usage quota --provider codex"
+format = "[$output]($style)"
+style = "green"
+```
+
+Install the `scripts/ai-usage` wrapper on `PATH` or set `AI_USAGE_EXECUTABLE` to the packaged executable. The [website CLI guide](web/src/pages/cli.astro) includes the same examples and localized instructions.
+
 ## CLI status line
 
 In **Settings → General → CLI Integration**, install the Claude Code status line to show quota from the last local snapshot. It reads no credentials and makes no network or model requests. AI Usage Monitor installs only when Claude Code has no existing `statusLine` configuration; removal is enabled only while the configured command still matches the app's ownership record. Claude Code may need to be restarted after changing the setting.

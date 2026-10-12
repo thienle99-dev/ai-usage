@@ -12,6 +12,7 @@ interface Props {
 const { lang, t } = Astro.props;
 const homeHref = withBase(langBasePath('/', lang));
 const featuresHref = `${homeHref}#features`;
+const cliGuideHref = withBase(langBasePath('/cli', lang));
 const releasesHref = withBase(langBasePath('/releases', lang));
 const repo = 'https://github.com/thienle99-dev/ai-usage';
 ---
@@ -47,6 +48,12 @@ const repo = 'https://github.com/thienle99-dev/ai-usage';
         class="rounded-lg px-2 py-2 text-sm font-medium text-mist transition-colors hover:bg-white/5 hover:text-white sm:px-3"
       >
         {t.nav.features}
+      </a>
+      <a
+        href={cliGuideHref}
+        class="hidden rounded-lg px-2 py-2 text-sm font-medium text-mist transition-colors hover:bg-white/5 hover:text-white md:inline sm:px-3"
+      >
+        {t.nav.cliGuide}
       </a>
       <a
         href={releasesHref}

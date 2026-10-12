@@ -44,8 +44,11 @@ enum QuotaAwareCLI {
         if arguments.first == "statusline" {
             return CLIStatusLine.run(arguments: Array(arguments.dropFirst()))
         }
+        if ["quota", "report"].contains(arguments.first) {
+            return UsageQueryCLI.run(arguments: arguments)
+        }
         guard let modeName = arguments.first, let mode = Mode(rawValue: modeName) else {
-            writeError("Usage: ai-usage <preflight|run> --provider <name> --estimated-tokens <count> [-- command arguments…]\n       ai-usage statusline [--provider <name>]\n")
+            writeError("Usage: ai-usage <preflight|run> --provider <name> --estimated-tokens <count> [-- command arguments…]\n       ai-usage quota [--provider <name>] [--format text|json]\n       ai-usage report [--group day|provider|model|project|session] [--range 7d|30d|all] [--format text|json]\n       ai-usage statusline [--provider <name>]\n")
             return 64
         }
         do {

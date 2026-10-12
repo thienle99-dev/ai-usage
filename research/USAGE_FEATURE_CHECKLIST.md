@@ -29,7 +29,7 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 
 ## Tự động hoá và vận hành
 
-- [ ] **CLI và JSON output:** truy vấn quota hoặc báo cáo qua terminal để tích hợp với shell, tmux, Starship và script.
+- [x] **CLI và JSON output:** `scripts/ai-usage quota` đọc snapshot cache, `report` tổng hợp log local theo nhóm/range; cả hai hỗ trợ text và JSON ổn định để tích hợp shell, tmux, Starship và script. Không refresh quota hay gọi model.
 - [ ] **Kiểm tra token-waste:** phân tích log cục bộ để phát hiện đọc file lặp hoặc output dư thừa; cần giới hạn dữ liệu và quyền truy cập rõ ràng.
 - [ ] **Localization và cập nhật ứng dụng:** bổ sung ngôn ngữ, cơ chế cập nhật, ký/notarize và quy trình phát hành hoàn chỉnh.
 

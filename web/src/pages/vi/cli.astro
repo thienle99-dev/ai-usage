@@ -1,0 +1,15 @@
+---
+import Base from '../../layouts/Base.astro';
+import SiteHeader from '../../components/SiteHeader.astro';
+import SiteFooter from '../../components/SiteFooter.astro';
+import CliGuide from '../../components/CliGuide.astro';
+import { messages } from '../../lib/i18n';
+
+const t = messages.vi;
+---
+
+<Base lang="vi" title="Hướng dẫn CLI quota và JSON · AI Usage Monitor" description="Truy vấn quota cache và báo cáo token local từ terminal với text hoặc JSON ổn định." path="/vi/cli">
+  <SiteHeader lang="vi" t={t} />
+  <CliGuide lang="vi" />
+  <SiteFooter lang="vi" t={t} />
+</Base>

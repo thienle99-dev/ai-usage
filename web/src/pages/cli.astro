@@ -1,0 +1,15 @@
+---
+import Base from '../layouts/Base.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import CliGuide from '../components/CliGuide.astro';
+import { messages } from '../lib/i18n';
+
+const t = messages.en;
+---
+
+<Base lang="en" title="CLI quota and JSON guide · AI Usage Monitor" description="Query cached provider quota and local token reports from the terminal with text or stable JSON output." path="/cli">
+  <SiteHeader lang="en" t={t} />
+  <CliGuide lang="en" />
+  <SiteFooter lang="en" t={t} />
+</Base>

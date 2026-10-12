@@ -25,6 +25,7 @@ Bricolage Grotesque / Figtree / IBM Plex Mono, `SiteHeader` / `SiteFooter` /
 
 - `src/pages/index.astro` — English landing (`/`)
 - `src/pages/vi/index.astro` — Vietnamese landing (`/vi/`)
+- `src/pages/cli.astro`, `src/pages/vi/cli.astro` — localized terminal quota and JSON report guide
 - `src/pages/releases.astro`, `src/pages/vi/releases.astro` — changelog + downloads
 - `src/pages/404.astro`, `src/pages/vi/404.astro`
 - `src/lib/i18n.ts` — all copy as `messages: Record<Lang, Messages>`; the build
@@ -33,7 +34,7 @@ Bricolage Grotesque / Figtree / IBM Plex Mono, `SiteHeader` / `SiteFooter` /
   `highlights`, optional `highlightsVi`)
 - `src/layouts/Base.astro` — shell, fonts, OG tags, skip link
 - `src/components/` — `Hero.astro` (CSS interface mock-up), `Sections.astro`
-  (providers/features/privacy/install/FAQ)
+  (providers/features/privacy/install/FAQ), `CliGuide.astro` (localized terminal examples)
 
 ## Add a release
 

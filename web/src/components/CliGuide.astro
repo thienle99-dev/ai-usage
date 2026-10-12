@@ -1,0 +1,109 @@
+---
+import type { Lang } from '../lib/i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const copy = lang === 'vi'
+  ? {
+      eyebrow: 'Tích hợp terminal',
+      title: 'Quota và báo cáo qua CLI',
+      intro: 'Dùng cùng dữ liệu với AI Usage Monitor trong shell, tmux, Starship hoặc script. Các lệnh chỉ đọc local; không tạo model request.',
+      installTitle: 'Chạy lệnh',
+      installBody: 'Từ thư mục repository, gọi wrapper scripts/ai-usage. Để gọi ở mọi nơi, thêm scripts vào PATH hoặc đặt AI_USAGE_EXECUTABLE trỏ tới executable của app.',
+      quotaTitle: 'Truy vấn quota',
+      quotaBody: 'quota đọc snapshot mới nhất mà app đã lưu. Bỏ --provider để lấy tất cả provider; có thể truyền tên đầy đủ hoặc tên ngắn.',
+      reportTitle: 'Báo cáo token',
+      reportBody: 'report chỉ quét log Claude Code và Codex khi bạn gọi lệnh. Có thể nhóm dữ liệu theo ngày, provider, model, project hoặc session và lọc 7 ngày, 30 ngày hoặc toàn bộ.',
+      jsonTitle: 'JSON ổn định cho script',
+      jsonBody: 'Dùng --format json để nhận một JSON object trên stdout, timestamp ISO 8601 và tên field snake_case. Stderr dành cho lỗi đối số.',
+      quotaFields: 'Quota JSON gồm source=local_cache và providers. Mỗi provider có id, name, status, stale, account, age_seconds và windows. Mỗi window có label, used_percent, remaining_percent, resets_at và detail khi có dữ liệu.',
+      reportFields: 'Report JSON nêu phạm vi, nhóm, số file đã quét và các hàng tổng hợp. Chi phí không có nguồn sẽ là null; chi phí từ Claude Code được gắn cost_is_estimate.',
+      shellTitle: 'Shell, tmux và Starship',
+      privacyTitle: 'Nguồn dữ liệu và trạng thái',
+      privacyBody: 'Quota không gọi API hay refresh provider. Nó dùng snapshot trong ~/Library/Application Support/AIUsage; trạng thái stale và unavailable được giữ rõ ràng. Lệnh quota trả exit code 3 nếu cache cần thiết chưa có. Report chỉ đọc metadata usage trong log local, không hiển thị hoặc lưu nội dung hội thoại.',
+      exampleNote: 'Các lệnh dùng executable trong repository; thay đường dẫn nếu bạn đặt wrapper ở nơi khác.',
+    }
+  : {
+      eyebrow: 'Terminal integration',
+      title: 'Quota and reports from the CLI',
+      intro: 'Use the same data as AI Usage Monitor in a shell, tmux, Starship, or your own scripts. These commands read local data and never make model requests.',
+      installTitle: 'Run the command',
+      installBody: 'From the repository, invoke scripts/ai-usage. To call it anywhere, put scripts on PATH or set AI_USAGE_EXECUTABLE to the packaged app executable.',
+      quotaTitle: 'Query quota',
+      quotaBody: 'quota reads the latest snapshot saved by the app. Omit --provider for all providers; pass a full or short provider name to select one.',
+      reportTitle: 'Token report',
+      reportBody: 'report scans Claude Code and Codex logs only when invoked. Group by day, provider, model, project, or session; select the last 7 days, 30 days, or all time.',
+      jsonTitle: 'Stable JSON for scripts',
+      jsonBody: 'Pass --format json for one JSON object on stdout, ISO 8601 timestamps, and snake_case field names. Argument errors go to stderr.',
+      quotaFields: 'Quota JSON includes source=local_cache and providers. Each provider has id, name, status, stale, account, age_seconds, and windows. Each window has label, used_percent, remaining_percent, resets_at, and detail when available.',
+      reportFields: 'Report JSON includes its range and grouping, scanned file counts, and aggregate rows. Cost without a source is null; Claude Code cost is marked with cost_is_estimate.',
+      shellTitle: 'Shell, tmux, and Starship',
+      privacyTitle: 'Data sources and status',
+      privacyBody: 'Quota does not call provider APIs or refresh usage. It reads the snapshot under ~/Library/Application Support/AIUsage and preserves stale or unavailable states. quota exits with code 3 when the requested cache is missing. report reads usage metadata from local logs only; it does not display or save conversation text.',
+      exampleNote: 'Examples use the repository executable; adjust the path if you install the wrapper elsewhere.',
+    };
+---
+
+<main id="main" class="mx-auto max-w-5xl px-4 pb-20 pt-10 sm:px-8 sm:pt-16">
+  <header data-reveal class="max-w-3xl">
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{copy.eyebrow}</p>
+    <h1 class="font-display mt-3 text-balance text-3xl font-bold tracking-tight text-white sm:text-5xl">{copy.title}</h1>
+    <p class="mt-4 text-base leading-relaxed text-mist sm:text-lg">{copy.intro}</p>
+  </header>
+
+  <div class="mt-9 grid gap-4 sm:grid-cols-2">
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.installTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.installBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage quota --provider codex
+./scripts/ai-usage report --group provider --range 7d</code></pre>
+      <p class="mt-3 text-xs text-mist/70">{copy.exampleNote}</p>
+    </section>
+
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.quotaTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.quotaBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage quota
+./scripts/ai-usage quota --provider claude --format json
+./scripts/ai-usage quota --format json | jq '.providers[].windows[] | &#123;label, used_percent, resets_at&#125;'</code></pre>
+      <p class="mt-3 text-xs leading-relaxed text-mist/80">{copy.quotaFields}</p>
+    </section>
+
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.reportTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.reportBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage report --group day --range 7d
+./scripts/ai-usage report --group project --range 30d --format json
+./scripts/ai-usage report --group session --range all --format json</code></pre>
+      <p class="mt-3 text-xs leading-relaxed text-mist/80">{copy.reportFields}</p>
+    </section>
+
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.jsonTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.jsonBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage report --group provider --range 30d --format json \
+  | jq -r '.rows[] | "\(.title): \(.total_tokens) tokens"'</code></pre>
+    </section>
+  </div>
+
+  <section data-reveal class="mt-4 rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+    <h2 class="font-display text-lg font-bold text-white">{copy.shellTitle}</h2>
+    <div class="mt-3 grid gap-4 md:grid-cols-2">
+      <pre class="font-mono overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code># tmux.conf
+set -g status-right '#(ai-usage quota --provider codex)'</code></pre>
+      <pre class="font-mono overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code># starship.toml
+[custom.ai_usage]
+command = "ai-usage quota --provider codex"
+format = "[$output]($style)"
+style = "green"</code></pre>
+    </div>
+  </section>
+
+  <aside data-reveal class="mt-4 rounded-2xl border border-teal/20 bg-teal/5 p-5 sm:p-6">
+    <h2 class="font-display text-base font-bold text-white">{copy.privacyTitle}</h2>
+    <p class="mt-2 text-sm leading-relaxed text-mist">{copy.privacyBody}</p>
+  </aside>
+</main>
