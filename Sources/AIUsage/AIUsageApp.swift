@@ -6,15 +6,55 @@ import SwiftUI
         MenuBarExtra {
             UsagePopover().environment(store)
         } label: {
-            Text(menuLabel)
+            MenuBarLabel(text: menuLabel, color: menuBarColor)
         }
         .menuBarExtraStyle(.window)
         Settings { SettingsView().environment(store) }
     }
+    private var maxUsage: Double? {
+        let values = store.snapshots.values.filter { store.visibleProviders.contains($0.provider) }.flatMap(\.windows).map(\.utilization)
+        return values.max()
+    }
+    private var menuBarColor: Color {
+        guard store.menuBarStyle != "App name", let value = maxUsage else {
+            return Color(red: 0.55, green: 0.53, blue: 0.7)
+        }
+        if value >= store.criticalThreshold { return .red }
+        if value >= store.warningThreshold { return .orange }
+        return Color(red: 0.55, green: 0.53, blue: 0.7)
+    }
     private var menuLabel: String {
         if store.menuBarStyle == "App name" { return "AI Usage" }
-        let values = store.snapshots.values.filter { store.visibleProviders.contains($0.provider) }.flatMap(\.windows).map(\.utilization)
-        return values.isEmpty ? "AI Usage" : "AI \(Int(values.max()!.rounded()))%"
+        return maxUsage.map { "AI \(Int($0.rounded()))%" } ?? "AI Usage"
+    }
+}
+
+struct MenuBarLabel: View {
+    let text: String
+    let color: Color
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .semibold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(color))
+    }
+}
+
+struct HeaderIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Color.primary.opacity(0.85))
+            .frame(width: 44, height: 30)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.purple.opacity(configuration.isPressed ? 0.3 : 0.15))
+            )
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
+            .scaleEffect(configuration.isPressed ? 0.96 : 1.0)
+            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
@@ -23,12 +63,16 @@ struct UsagePopover: View {
     @Environment(\.openSettings) private var openSettings
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("AI Usage").font(.headline)
                 Spacer()
-                Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh now")
-                Button { openSettings() } label: { Image(systemName: "gearshape") }.help("Settings")
-                Button { NSApplication.shared.terminate(nil) } label: { Image(systemName: "xmark") }.help("Quit")
+                Button { Task { await store.refresh() } } label: { Image(systemName: "arrow.clockwise") }
+                    .buttonStyle(HeaderIconButtonStyle()).help("Refresh now")
+                    .disabled(!store.refreshing.isEmpty)
+                Button { openSettings() } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(HeaderIconButtonStyle()).help("Settings")
+                Button { NSApplication.shared.terminate(nil) } label: { Image(systemName: "xmark") }
+                    .buttonStyle(HeaderIconButtonStyle()).help("Quit")
             }
             ForEach(Provider.allCases.filter { store.visibleProviders.contains($0) }) { provider in
                 providerCard(provider)
@@ -36,25 +80,36 @@ struct UsagePopover: View {
             HStack { Text("Refreshes every \(max(1, store.refreshInterval / 60)) min"); Spacer(); Text("Settings…").foregroundStyle(.secondary).onTapGesture { openSettings() } }
                 .font(.caption)
         }
-        .padding(16).frame(width: 340).task { if store.snapshots.isEmpty || store.snapshots.values.contains(where: \.isStale) { await store.refresh() } }
+        .padding(16).frame(width: 340).task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
         .preferredColorScheme(store.appearance == "Light" ? .light : store.appearance == "Dark" ? .dark : nil)
     }
     @ViewBuilder private func providerCard(_ provider: Provider) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack { Text(provider.rawValue).font(.subheadline.weight(.semibold)); Spacer(); if store.refreshing.contains(provider) { ProgressView().controlSize(.small) } }
             if let snapshot = store.snapshots[provider] {
-                if snapshot.windows.isEmpty { Text(snapshot.error ?? "No usage data").foregroundStyle(.secondary).font(.caption) }
+                if snapshot.windows.isEmpty {
+                    Text(snapshot.error ?? "No quota windows or usage credits were reported.")
+                        .foregroundStyle(snapshot.error == nil ? Color.secondary : Color.orange)
+                        .font(.caption).lineLimit(5).fixedSize(horizontal: false, vertical: true)
+                }
                 ForEach(snapshot.windows) { window in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack { Text(window.label); Spacer(); Text("\(Int(window.utilization.rounded()))%") }
                             .font(.caption)
                         ProgressView(value: window.utilization, total: 100).tint(color(for: window.utilization))
+                        if let detail = window.detail { Text(detail).font(.caption2).foregroundStyle(.secondary) }
                         if let date = window.resetsAt { Text("Resets \(date, style: .relative)").font(.caption2).foregroundStyle(.secondary) }
                     }
                 }
                 if let account = snapshot.account { Text(account).font(.caption2).foregroundStyle(.secondary) }
-                HStack { Text(snapshot.error.map { "Stale · \($0)" } ?? "Updated"); Spacer(); if snapshot.lastSuccess != .distantPast { Text(snapshot.lastSuccess, style: .time) } }
-                    .font(.caption2).foregroundStyle(snapshot.error == nil ? Color.secondary : Color.orange)
+                VStack(alignment: .leading, spacing: 3) {
+                    if let error = snapshot.error {
+                        Text("Stale · \(error)").lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("Updated")
+                    }
+                    if snapshot.lastSuccess != .distantPast { Text(snapshot.lastSuccess, style: .time) }
+                }.font(.caption2).foregroundStyle(snapshot.error == nil ? Color.secondary : Color.orange)
             } else { Text("Waiting for first refresh…").font(.caption).foregroundStyle(.secondary) }
         }.padding(12).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
     }

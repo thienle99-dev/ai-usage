@@ -12,8 +12,14 @@ import SwiftUI
     var appearance = "System" { didSet { defaults.set(appearance, forKey: "appearance") } }
     private let providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider()]
     private var timer: Task<Void, Never>?
+    private var didCompleteInitialRefresh = false
     private let defaults = UserDefaults.standard
     private let cacheURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
+
+    var needsInitialRefreshOnOpen: Bool {
+        guard !didCompleteInitialRefresh else { return false }
+        return snapshots.isEmpty || snapshots.values.contains(where: \.isStale) || snapshots[.claude]?.account == nil
+    }
 
     init() {
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
@@ -45,6 +51,7 @@ import SwiftUI
                 }
             }
         }
+        didCompleteInitialRefresh = true
         save()
     }
     func schedule() {

@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import CryptoKit
 
 protocol UsageProvider: Sendable {
     var provider: Provider { get }
@@ -21,13 +22,49 @@ struct ClaudeProvider: UsageProvider {
             let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("No HTTP response from Claude.") }
             if http.statusCode == 429, attempt < 2 {
-                try await Task.sleep(for: .seconds(attempt == 0 ? 1 : 3))
+                try await Task.sleep(for: .seconds(retryDelay(header: http.value(forHTTPHeaderField: "Retry-After"), attempt: attempt)))
                 continue
             }
             guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
-            return UsageSnapshot(provider: .claude, windows: try UsageParsing.claude(data), account: nil, lastSuccess: .now)
+            let windows = try UsageParsing.claude(data)
+            let account = await ClaudeAccountLookup.shared.account(for: token)
+            return UsageSnapshot(provider: .claude, windows: windows, account: account, lastSuccess: .now)
         }
         throw ProviderFailure.http(429)
+    }
+
+    private func retryDelay(header: String?, attempt: Int) -> Double {
+        let fallback = attempt == 0 ? 1.0 : 3.0
+        guard let header = header?.trimmingCharacters(in: .whitespacesAndNewlines), !header.isEmpty else { return fallback }
+        if let seconds = Double(header) { return min(30, max(1, seconds)) }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE',' dd MMM yyyy HH':'mm':'ss z"
+        if let date = formatter.date(from: header) { return min(30, max(1, date.timeIntervalSinceNow)) }
+        return fallback
+    }
+}
+
+private actor ClaudeAccountLookup {
+    static let shared = ClaudeAccountLookup()
+    private var cached: (fingerprint: String, value: String, expiresAt: Date)?
+
+    func account(for token: String) async -> String? {
+        let fingerprint = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        if let cached, cached.fingerprint == fingerprint, cached.expiresAt > .now { return cached.value }
+        var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/profile")!)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let value = UsageParsing.claudeAccount(data) else { return nil }
+        cached = (fingerprint, value, .now.addingTimeInterval(6 * 60 * 60))
+        return value
     }
 }
 

@@ -11,6 +11,7 @@ struct UsageWindow: Codable, Identifiable {
     let label: String
     let utilization: Double
     let resetsAt: Date?
+    var detail: String? = nil
 }
 
 struct UsageSnapshot: Codable, Identifiable {
@@ -36,6 +37,30 @@ enum ProviderFailure: LocalizedError {
 }
 
 enum UsageParsing {
+    static func claudeAccount(_ data: Data) -> String? {
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        let account = root["account"] as? [String: Any]
+        let organization = root["organization"] as? [String: Any]
+        let email = (account?["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let displayName = (account?["display_name"] as? String) ?? (account?["full_name"] as? String)
+        let plan = (organization?["rate_limit_tier"] as? String) ?? (account?["subscription_type"] as? String)
+        let identity = [email, displayName].compactMap { $0 }.first(where: { !$0.isEmpty })
+        guard let identity else { return nil }
+        guard let plan, !plan.isEmpty else { return identity }
+        return "\(identity) · \(friendlyPlan(plan))"
+    }
+
+    private static func friendlyPlan(_ value: String) -> String {
+        let normalized = value.lowercased()
+        if normalized.contains("max_20x") { return "Max 20x" }
+        if normalized.contains("max_5x") { return "Max 5x" }
+        if normalized.contains("max") { return "Max" }
+        if normalized.contains("pro") { return "Pro" }
+        if normalized.contains("team") { return "Team" }
+        if normalized.contains("enterprise") { return "Enterprise" }
+        return value
+    }
+
     static func claude(_ data: Data, now: Date = .now) throws -> [UsageWindow] {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderFailure.invalidResponse("Claude returned malformed usage data.")
@@ -50,14 +75,65 @@ enum UsageParsing {
                   let amount = number(item["utilization"] ?? item["used_percentage"] ?? item["usedPercentage"]) else { continue }
             result.append(UsageWindow(label: label, utilization: min(100, max(0, amount)), resetsAt: date(item["resets_at"] ?? item["resetsAt"])))
         }
-        guard !result.isEmpty else {
+        // Newer usage responses may report normalized `limits` records instead
+        // of the legacy five_hour/seven_day fields.
+        if let limits = limitItems(root["limits"]) {
+            for (limit, keyedKind) in limits {
+                guard let amount = number(limit["percent"] ?? limit["utilization"]) else { continue }
+                let kind = (limit["kind"] as? String) ?? (limit["group"] as? String) ?? keyedKind ?? ""
+                let label: String
+                switch kind {
+                case "session": label = "Session"
+                case "weekly_all", "weekly": label = "Weekly"
+                case "weekly_scoped":
+                    let scope = limit["scope"] as? [String: Any]
+                    let model = scope?["model"] as? [String: Any]
+                    let name = (model?["display_name"] as? String) ?? (model?["name"] as? String)
+                    label = name.map { "\($0) weekly" } ?? "Model weekly"
+                default: continue
+                }
+                if result.contains(where: { $0.label == label }) { continue }
+                result.append(UsageWindow(label: label, utilization: min(100, max(0, amount)), resetsAt: date(limit["resets_at"] ?? limit["resetsAt"])))
+            }
+        }
+        if let extraUsage = root["extra_usage"] as? [String: Any],
+           (extraUsage["is_enabled"] as? Bool) == true,
+           let used = number(extraUsage["used_credits"]),
+           let limit = number(extraUsage["monthly_limit"]), limit > 0 {
+            let percent = number(extraUsage["utilization"]) ?? (used / limit * 100)
+            let currency = (extraUsage["currency"] as? String) ?? "USD"
+            let amountDescription = "\(money(used, currency: currency)) / \(money(limit, currency: currency))"
+            if !result.contains(where: { $0.label == "Usage credits" }) {
+                result.append(UsageWindow(label: "Usage credits", utilization: min(100, max(0, percent)), resetsAt: nil, detail: amountDescription))
+            }
+        }
+        let hasUsageSchema = ["five_hour", "seven_day", "limits", "extra_usage"].contains { root[$0] != nil }
+        guard !result.isEmpty || hasUsageSchema else {
             let keys = root.keys.sorted().joined(separator: ", ")
             let nestedKeys = ["utilization", "rate_limits", "rateLimits"].compactMap { root[$0] as? [String: Any] }
                 .flatMap { $0.keys }.sorted().joined(separator: ", ")
             let details = nestedKeys.isEmpty ? keys : "\(keys) (nested: \(nestedKeys))"
-            throw ProviderFailure.invalidResponse("Claude returned no recognized usage windows. Response fields: \(details.isEmpty ? "none" : details).")
+            throw ProviderFailure.invalidResponse("Claude returned an unrecognized usage response. Response fields: \(details.isEmpty ? "none" : details).")
         }
         return result
+    }
+
+    private static func limitItems(_ value: Any?) -> [([String: Any], String?)]? {
+        if let array = value as? [[String: Any]] { return array.map { ($0, nil) } }
+        guard let object = value as? [String: Any] else { return nil }
+        if object["kind"] != nil || object["group"] != nil { return [(object, nil)] }
+        return object.compactMap { key, value in
+            guard let item = value as? [String: Any] else { return nil }
+            return (item, key)
+        }
+    }
+
+    private static func money(_ value: Double, currency: String) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = currency
+        formatter.locale = Locale(identifier: "en_US")
+        return formatter.string(from: NSNumber(value: value)) ?? "\(currency) \(value)"
     }
 
     static func codex(_ data: Data) throws -> (windows: [UsageWindow], account: String?) {

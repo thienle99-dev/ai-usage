@@ -20,6 +20,38 @@ final class ParserTests: XCTestCase {
         XCTAssertNotNil(window.resetsAt)
     }
 
+    func testClaudeLimitsArrayPayload() throws {
+        let data = Data(#"{"limits":[{"kind":"session","group":"session","percent":5,"is_active":true},{"kind":"weekly_all","group":"weekly","percent":14,"resets_at":"2026-10-19T10:00:00Z","is_active":false},{"kind":"weekly_scoped","group":"weekly","percent":16,"scope":{"model":{"display_name":"Fable"}}}]}"#.utf8)
+        let windows = try UsageParsing.claude(data)
+        XCTAssertEqual(windows.map(\.label), ["Session", "Weekly", "Fable weekly"])
+        XCTAssertEqual(windows.map(\.utilization), [5, 14, 16])
+        XCTAssertNotNil(windows[1].resetsAt)
+    }
+
+    func testClaudeExtraUsageCreditsPayload() throws {
+        let data = Data(#"{"five_hour":null,"seven_day":null,"extra_usage":{"is_enabled":true,"monthly_limit":60,"used_credits":0.4,"utilization":null,"currency":"USD"}}"#.utf8)
+        let window = try XCTUnwrap(UsageParsing.claude(data).first)
+        XCTAssertEqual(window.label, "Usage credits")
+        XCTAssertEqual(window.utilization, 2.0 / 3.0, accuracy: 0.001)
+        XCTAssertEqual(window.detail, "$0.40 / $60.00")
+    }
+
+    func testClaudeAccountProfileShowsEmailAndPlan() throws {
+        let data = Data(#"{"account":{"email":"person@example.com","display_name":"Person"},"organization":{"rate_limit_tier":"default_claude_max_20x"}}"#.utf8)
+        XCTAssertEqual(UsageParsing.claudeAccount(data), "person@example.com · Max 20x")
+    }
+
+    func testClaudeAccountProfileFallsBackToDisplayName() throws {
+        let data = Data(#"{"account":{"full_name":"Claude User"}}"#.utf8)
+        XCTAssertEqual(UsageParsing.claudeAccount(data), "Claude User")
+        XCTAssertNil(UsageParsing.claudeAccount(Data("{}".utf8)))
+    }
+
+    func testClaudeRecognizesEmptyQuotaSchema() throws {
+        let data = Data(#"{"five_hour":null,"seven_day":null,"extra_usage":{"is_enabled":false}}"#.utf8)
+        XCTAssertTrue(try UsageParsing.claude(data).isEmpty)
+    }
+
     func testCodexDurationSelection() throws {
         let data = Data(#"{"result":{"email":"a@example.com","rateLimits":{"primary":{"usedPercent":42,"windowDurationMins":300},"secondary":{"usedPercent":60,"windowDurationMins":10080}}}}"#.utf8)
         let result = try UsageParsing.codex(data)
