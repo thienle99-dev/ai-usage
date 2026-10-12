@@ -22,10 +22,10 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 ## Lịch sử, báo cáo và giao diện
 
 - [ ] **Lịch sử usage và burndown:** lưu snapshot theo thời gian để xem xu hướng và dự đoán quota cạn; phân biệt dữ liệu đo được với ước tính.
-- [ ] **Báo cáo token/chi phí:** tổng hợp theo ngày, provider, model, project hoặc session; chỉ báo chi phí ước tính khi nguồn không phải dữ liệu billing thực.
+- [x] **Báo cáo token/chi phí:** cửa sổ báo cáo quét metadata token từ Claude Code/Codex JSONL theo yêu cầu; nhóm theo ngày, provider, model, project hoặc session. Claude `costUSD` được ghi rõ là ước tính local, không phải billing; Codex và provider không có token telemetry không được gán chi phí giả.
 - [ ] **Xuất báo cáo offline:** HTML, CSV hoặc ảnh; hỗ trợ ẩn tên project nếu có dữ liệu nhạy cảm.
-- [ ] **Tuỳ biến dashboard:** kéo thả thứ tự thẻ, thêm theme và giữ lựa chọn sau khi khởi động lại.
-- [ ] **Widget hệ thống:** hiển thị quota tóm tắt bên ngoài menu bar; cần chốt phạm vi macOS trước khi triển khai.
+- [x] **Tuỳ biến dashboard:** kéo thả thứ tự thẻ provider trong Overview, chọn Dark Minimal/Slate/Violet ở Appearance; thứ tự và theme được lưu qua lần khởi động lại.
+- [x] **Widget hệ thống:** WidgetKit trên macOS 14+, kích thước nhỏ/vừa, hiển thị quota cache của các provider đang bật; widget chỉ đọc App Group snapshot, không tự gọi API.
 
 ## Tự động hoá và vận hành
 

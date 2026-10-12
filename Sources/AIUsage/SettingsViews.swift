@@ -1045,6 +1045,14 @@ private struct ProviderConfigButton: View {
 
 struct AppearanceSettingsView: View {
     var store: Bindable<UsageStore>
+    @AppStorage("dashboardTheme") private var dashboardThemeRaw = DashboardTheme.darkMinimal.rawValue
+
+    private var dashboardThemeSelection: Binding<DashboardTheme> {
+        Binding(
+            get: { DashboardTheme(rawValue: dashboardThemeRaw) ?? .darkMinimal },
+            set: { dashboardThemeRaw = $0.rawValue }
+        )
+    }
 
     var body: some View {
         SettingsPage(title: "Appearance", subtitle: "Match System Appearance, or choose Light or Dark.") {
@@ -1059,6 +1067,17 @@ struct AppearanceSettingsView: View {
                     .labelsHidden()
                     .frame(width: 220)
                     .accessibilityLabel("Color scheme")
+                }
+                SettingsRowDivider()
+                SettingsRow(title: "Dashboard theme", description: "Choose the dashboard color palette.") {
+                    Picker("Dashboard theme", selection: dashboardThemeSelection) {
+                        ForEach(DashboardTheme.allCases) { theme in
+                            Text(theme.title).tag(theme)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 150)
+                    .accessibilityLabel("Dashboard theme")
                 }
             }
             SettingsSection(title: "Usage thresholds") {

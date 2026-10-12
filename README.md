@@ -61,6 +61,10 @@ The same section can manage RTK hooks for Claude Code, Codex, and Gemini CLI whe
 
 In **Settings → General → Claude Code Context Mode**, install the official Context Mode plugin from its Claude Code marketplace. Installation requires Claude Code v1.0.33+ and Node.js v22.5+; AI Usage Monitor does not install either prerequisite or bundle Context Mode source. It only removes a plugin and marketplace that it recorded as app-managed, and leaves an existing unmanaged installation untouched. Context Mode keeps local session and index data, and its `ctx_execute` tool runs code with Claude Code's filesystem permissions. AI Usage Monitor does not read Context Mode data or enable its settings automatically.
 
+## Token and cost report
+
+Open **Token & Cost Report…** from the dashboard layout menu to scan local Claude Code and Codex JSONL usage logs. The scan runs only when requested and reads token counts plus model, date, project folder, and session ID; it does not display or save message text. Reports can group by day, provider, model, project, or session. Claude Code's local `costUSD` is shown as an estimate, not billing data. Codex session logs do not provide billing cost here, so cost remains unavailable for Codex. Other providers expose quota but not per-request token usage to this app.
+
 The formatter can also be used by compatible shell prompts and hooks:
 
 ```sh

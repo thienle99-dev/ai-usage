@@ -15,6 +15,12 @@ import ServiceManagement
             }
         }
     }
+    var providerOrder: [Provider] = Provider.supported {
+        didSet {
+            defaults.set(providerOrder.map(\.rawValue), forKey: "providerOrder")
+            publishWidgetSnapshot()
+        }
+    }
     var selectedProvider: Provider? {
         didSet {
             if let selectedProvider { defaults.set(selectedProvider.rawValue, forKey: "selectedProvider") }
@@ -111,6 +117,7 @@ import ServiceManagement
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
         }
+        providerOrder = Self.normalizedProviderOrder(defaults.stringArray(forKey: "providerOrder"))
         if let raw = defaults.string(forKey: "selectedProvider") {
             selectedProvider = Provider(rawValue: raw)
         }
@@ -155,6 +162,27 @@ import ServiceManagement
                 }
             }
         }
+    }
+
+    static func normalizedProviderOrder(_ saved: [String]?, supported: [Provider] = Provider.supported) -> [Provider] {
+        guard let saved else { return supported }
+        var ordered = saved.compactMap { Provider(rawValue: $0) }
+            .filter { supported.contains($0) }
+        var seen = Set<Provider>()
+        ordered = ordered.filter { seen.insert($0).inserted }
+        ordered.append(contentsOf: supported.filter { seen.insert($0).inserted })
+        return ordered
+    }
+
+    func moveProvider(_ provider: Provider, before target: Provider) {
+        guard provider != target,
+              let sourceIndex = providerOrder.firstIndex(of: provider),
+              let targetIndex = providerOrder.firstIndex(of: target) else { return }
+        var order = providerOrder
+        order.remove(at: sourceIndex)
+        let adjustedTarget = targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
+        order.insert(provider, at: adjustedTarget)
+        providerOrder = order
     }
 
     func refresh(provider requestedProvider: Provider? = nil) async {

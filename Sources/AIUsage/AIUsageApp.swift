@@ -30,6 +30,12 @@ import Darwin
         }
         .defaultSize(width: 760, height: 560)
         .windowResizability(.contentSize)
+
+        Window("Token & Cost Report", id: "usage-report") {
+            UsageReportView()
+                .preferredColorScheme(store.colorSchemeOverride)
+        }
+        .defaultSize(width: 880, height: 680)
     }
 }
 
@@ -173,12 +179,14 @@ struct UsagePopover: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var quitHovered = false
+    @State private var showLayoutPopover = false
     @AppStorage("overviewCardLayout") private var overviewCardLayoutRaw = UsageCardLayout.twoColumns.rawValue
     @AppStorage("detailCardLayout") private var detailCardLayoutRaw = UsageCardLayout.compactBalanced.rawValue
     @AppStorage("useUnifiedCardLayout") private var useUnifiedCardLayout = false
+    @AppStorage("dashboardTheme") private var dashboardThemeRaw = DashboardTheme.darkMinimal.rawValue
 
     private var shownProviders: [Provider] {
-        Provider.supported.filter { provider in
+        store.providerOrder.filter { provider in
             store.visibleProviders.contains(provider) && (store.selectedProvider == nil || store.selectedProvider == provider)
         }
     }
@@ -190,7 +198,7 @@ struct UsagePopover: View {
                     get: { store.selectedProvider },
                     set: { store.selectedProvider = $0 }
                 ),
-                providers: Provider.supported.filter { store.visibleProviders.contains($0) }
+                providers: store.providerOrder.filter { store.visibleProviders.contains($0) }
             )
 
             if shownProviders.isEmpty {
@@ -199,12 +207,7 @@ struct UsagePopover: View {
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(shownProviders) { provider in
-                            ProviderUsageCard(
-                                provider: provider,
-                                layout: activeLayout,
-                                retry: { Task { await store.refresh(provider: provider) } },
-                                manageAccounts: { presentSettingsWindow(tab: "Providers") }
-                            )
+                            providerCard(provider)
                         }
                     }
                     .padding(.vertical, 1)
@@ -217,7 +220,34 @@ struct UsagePopover: View {
         .padding(16)
         .frame(width: 380, height: 620, alignment: .top)
         .background(UsageTheme.background)
+        .accessibilityIdentifier("dashboard-theme-\(dashboardThemeRaw)")
         .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
+    }
+
+    @ViewBuilder
+    private func providerCard(_ provider: Provider) -> some View {
+        let card = ProviderUsageCard(
+            provider: provider,
+            layout: activeLayout,
+            retry: { Task { await store.refresh(provider: provider) } },
+            manageAccounts: { presentSettingsWindow(tab: "Providers") }
+        )
+        if store.selectedProvider == nil {
+            card
+                .draggable(provider.rawValue)
+                .dropDestination(for: String.self) { values, _ in
+                    guard let rawValue = values.first,
+                          let movingProvider = Provider(rawValue: rawValue),
+                          movingProvider != provider else { return false }
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        store.moveProvider(movingProvider, before: provider)
+                    }
+                    return true
+                }
+                .help("Drag to reorder provider cards")
+        } else {
+            card
+        }
     }
 
     private var activeLayout: UsageCardLayout {
@@ -276,74 +306,152 @@ struct UsagePopover: View {
     }
 
     private var header: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
             Image(systemName: "chart.bar.fill")
-                .font(.system(size: 17, weight: .semibold))
+                .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(UsageTheme.secondaryText)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("AI Usage").font(.system(size: 16, weight: .semibold))
-                if let lastRefresh = store.lastRefreshAttempt {
-                    Text("Updated at \(lastRefresh.formatted(date: .omitted, time: .shortened))")
-                        .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
-                } else {
-                    Text("Not refreshed yet").font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
-                }
-            }
-            Spacer(minLength: 8)
+                .frame(width: 23, height: 23)
+                .background(UsageTheme.elevated.opacity(0.7), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            Text("AI Usage")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(UsageTheme.primaryText)
+                .fixedSize()
+            Spacer(minLength: 4)
             Button { Task { await store.refresh() } } label: {
                 Group {
                     if store.isRefreshing { ProgressView().controlSize(.small) }
                     else { Image(systemName: "arrow.clockwise") }
                 }
-                .frame(width: 30, height: 30)
+                .frame(width: 26, height: 26)
             }
             .buttonStyle(QuietIconButtonStyle())
             .help("Refresh now")
             .accessibilityLabel("Refresh usage now")
             .disabled(store.isRefreshing)
 
+            appearanceToggleButton
+
             Button {
                 presentSettingsWindow()
             } label: {
-                Image(systemName: "gearshape").frame(width: 30, height: 30)
+                Image(systemName: "gearshape").frame(width: 26, height: 26)
             }
             .buttonStyle(QuietIconButtonStyle())
             .help("Settings")
             .accessibilityLabel("Open Settings")
 
-            Menu {
-                Section(store.selectedProvider == nil ? "Overview Layout" : "Provider Detail Layout") {
-                    ForEach(UsageCardLayout.allCases) { layout in
-                        Button {
-                            if useUnifiedCardLayout || store.selectedProvider == nil {
-                                overviewCardLayoutRaw = layout.rawValue
-                            } else {
-                                detailCardLayoutRaw = layout.rawValue
-                            }
-                        } label: {
-                            if activeLayout == layout { Label(layout.title, systemImage: "checkmark") }
-                            else { Text(layout.title) }
-                        }
-                    }
-                }
-                Divider()
-                Button("Customize in Settings…") { presentSettingsWindow() }
-            } label: {
-                Image(systemName: "rectangle.grid.2x2")
-                    .frame(width: 30, height: 30)
+            Button { showLayoutPopover.toggle() } label: {
+                Image(systemName: layoutSymbol(activeLayout))
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
-            .menuStyle(.borderlessButton)
             .buttonStyle(QuietIconButtonStyle())
             .help("Card layout")
             .accessibilityLabel("Choose card layout")
+            .popover(isPresented: $showLayoutPopover, arrowEdge: .bottom) {
+                layoutPopover
+            }
+        }
+    }
+
+    private var layoutPopover: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(store.selectedProvider == nil ? "Overview Layout" : "Provider Detail Layout")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(UsageTheme.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+            ForEach(UsageCardLayout.allCases) { layout in
+                Button {
+                    if useUnifiedCardLayout || store.selectedProvider == nil {
+                        overviewCardLayoutRaw = layout.rawValue
+                    } else {
+                        detailCardLayoutRaw = layout.rawValue
+                    }
+                    showLayoutPopover = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: layoutSymbol(layout))
+                            .frame(width: 16)
+                        Text(layout.title)
+                        Spacer(minLength: 8)
+                        if activeLayout == layout {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(activeLayout == layout ? UsageTheme.primaryText : UsageTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .background(activeLayout == layout ? UsageTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .accessibilityAddTraits(activeLayout == layout ? .isSelected : [])
+            }
+            Rectangle().fill(UsageTheme.separator).frame(height: 1).padding(.vertical, 3)
+            Button("Token & Cost Report…") {
+                showLayoutPopover = false
+                openWindow(id: "usage-report")
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .padding(.horizontal, 8)
+            .frame(height: 26, alignment: .leading)
+            Button("Customize in Settings…") {
+                showLayoutPopover = false
+                presentSettingsWindow()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+            .padding(.horizontal, 8)
+            .frame(height: 26, alignment: .leading)
+            .padding(.bottom, 3)
+        }
+        .padding(7)
+        .frame(width: 205)
+        .background(UsageTheme.card)
+    }
+
+    private var appearanceToggleButton: some View {
+        let isDark = isCurrentlyDark
+        let destination = isDark ? "Light" : "Dark"
+        return Button {
+            store.appearance = isDark ? "light" : "dark"
+        } label: {
+            Image(systemName: isDark ? "moon" : "sun.max")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(UsageTheme.secondaryText)
+                .frame(width: 24, height: 24)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(QuietIconButtonStyle())
+        .help("Switch to \(destination) appearance")
+        .accessibilityLabel("Switch to \(destination.lowercased()) appearance")
+    }
+
+    private var isCurrentlyDark: Bool {
+        switch store.appearance {
+        case "dark": true
+        case "light": false
+        default: NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        }
+    }
+
+    private func layoutSymbol(_ layout: UsageCardLayout) -> String {
+        switch layout {
+        case .compactBalanced: "rectangle.grid.1x2"
+        case .twoColumns: "rectangle.split.2x1"
+        case .minimalRows: "list.bullet"
+        case .collapsible: "rectangle.compress.vertical"
         }
     }
 
     private var footer: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             Rectangle().fill(UsageTheme.separator).frame(height: 1)
-            HStack {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 7) {
                     Image(systemName: "clock")
                         .font(.system(size: 11, weight: .medium))
@@ -358,23 +466,38 @@ struct UsagePopover: View {
                             .foregroundStyle(UsageTheme.primaryText)
                     }
                 }
-                Spacer()
+                .font(.system(size: 11))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(store.lastRefreshAttempt == nil ? UsageTheme.mutedText : UsageTheme.codex)
+                        .frame(width: 4, height: 4)
+                    Text(store.lastRefreshAttempt.map { "Updated \($0.formatted(date: .omitted, time: .shortened))" } ?? "Not refreshed")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+                .accessibilityLabel(store.lastRefreshAttempt.map { "Last updated at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Usage has not been refreshed")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
                 Button { NSApp.terminate(nil) } label: {
                     Label("Quit", systemImage: "power")
-                        .font(.system(size: 11, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(UsageTheme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
+                        .padding(.horizontal, 8)
+                        .frame(height: 22)
                         .background(quitHovered ? UsageTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(RoundedRectangle(cornerRadius: 8))
                 }
                 .buttonStyle(.plain)
                 .onHover { quitHovered = $0 }
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: quitHovered)
-                    .accessibilityLabel("Quit AI Usage Monitor")
+                .accessibilityLabel("Quit AI Usage Monitor")
             }
-            .font(.system(size: 11))
-            .frame(height: 28)
         }
         .padding(.top, 2)
     }
