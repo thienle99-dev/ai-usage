@@ -1,0 +1,66 @@
+---
+import type { Lang, Messages } from '../lib/i18n';
+import { langBasePath } from '../lib/i18n';
+import { withBase } from '../lib/paths';
+import LangSwitcher from './LangSwitcher.astro';
+
+interface Props {
+  lang: Lang;
+  t: Messages;
+}
+
+const { lang, t } = Astro.props;
+const homeHref = withBase(langBasePath('/', lang));
+const featuresHref = `${homeHref}#features`;
+const releasesHref = withBase(langBasePath('/releases', lang));
+const repo = 'https://github.com/thienle99-dev/ai-usage';
+---
+
+<header class="relative z-20">
+  <div class="mx-auto flex max-w-6xl items-center justify-between gap-2 px-4 py-4 sm:gap-3 sm:px-8 sm:py-5">
+    <a href={homeHref} class="group flex min-w-0 items-center gap-2.5 sm:gap-3">
+      <svg
+        viewBox="0 0 64 64"
+        width="40"
+        height="40"
+        aria-hidden="true"
+        class="h-9 w-9 shrink-0 rounded-[22%] shadow-[0_8px_24px_rgba(42,168,146,0.35)] transition-transform duration-300 group-hover:scale-[1.04] sm:h-10 sm:w-10"
+      >
+        <defs>
+          <linearGradient id="aiulogo" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#2aa892"></stop>
+            <stop offset="1" stop-color="#b77450"></stop>
+          </linearGradient>
+        </defs>
+        <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#aiulogo)"></rect>
+        <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round">
+          <line x1="20" y1="44" x2="20" y2="30"></line>
+          <line x1="32" y1="44" x2="32" y2="22"></line>
+          <line x1="44" y1="44" x2="44" y2="14"></line>
+        </g>
+      </svg>
+      <span class="font-display text-base font-bold tracking-tight text-white sm:text-xl">{t.meta.name}</span>
+    </a>
+    <nav class="flex shrink-0 items-center gap-1.5 sm:gap-3" aria-label={t.a11y.primaryNav}>
+      <a
+        href={featuresHref}
+        class="rounded-lg px-2 py-2 text-sm font-medium text-mist transition-colors hover:bg-white/5 hover:text-white sm:px-3"
+      >
+        {t.nav.features}
+      </a>
+      <a
+        href={releasesHref}
+        class="hidden rounded-lg px-3 py-2 text-sm font-medium text-mist transition-colors hover:bg-white/5 hover:text-white sm:inline"
+      >
+        {t.nav.releases}
+      </a>
+      <LangSwitcher lang={lang} />
+      <a
+        href={releasesHref}
+        class="rounded-full bg-teal px-3 py-2 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(42,168,146,0.35)] transition hover:bg-teal-bright active:scale-[0.98] sm:px-4"
+      >
+        {t.hero.download}
+      </a>
+    </nav>
+  </div>
+</header>

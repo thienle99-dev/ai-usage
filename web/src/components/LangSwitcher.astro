@@ -1,0 +1,43 @@
+---
+import type { Lang } from '../lib/i18n';
+import { langBasePath, messages, stripLangPrefix } from '../lib/i18n';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const path = stripLangPrefix(Astro.url.pathname);
+const enHref = withBase(langBasePath(path, 'en'));
+const viHref = withBase(langBasePath(path, 'vi'));
+---
+
+<div
+  class="inline-flex items-center rounded-full border border-white/15 p-0.5 text-xs font-semibold"
+  role="group"
+  aria-label={messages[lang].lang.label}
+>
+  <a
+    href={enHref}
+    class:list={[
+      'rounded-full px-2.5 py-1 transition-colors',
+      lang === 'en' ? 'bg-white/15 text-white' : 'text-mist hover:bg-white/10 hover:text-white',
+    ]}
+    hreflang="en"
+    aria-current={lang === 'en' ? 'true' : undefined}
+  >
+    EN
+  </a>
+  <a
+    href={viHref}
+    class:list={[
+      'rounded-full px-2.5 py-1 transition-colors',
+      lang === 'vi' ? 'bg-white/15 text-white' : 'text-mist hover:bg-white/10 hover:text-white',
+    ]}
+    hreflang="vi"
+    aria-current={lang === 'vi' ? 'true' : undefined}
+  >
+    VI
+  </a>
+</div>

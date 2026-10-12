@@ -1,12 +1,23 @@
 ---
 import Base from '../layouts/Base.astro';
-import { en } from '../i18n/en';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import { messages } from '../lib/i18n';
+
+const t = messages.en;
 ---
 
-<Base lang="en" title={en.notFound.title} description={en.notFound.subtitle} path="/404">
-  <section>
-    <h2>{en.notFound.title}</h2>
-    <p class="sub">{en.notFound.subtitle}</p>
-    <a class="btn primary" href="/">{en.notFound.home}</a>
-  </section>
+<Base lang="en" title={t.notFound.title} description={t.notFound.subtitle} path="/404">
+  <SiteHeader lang="en" t={t} />
+  <main id="main" class="mx-auto max-w-6xl px-4 pb-20 pt-16 sm:px-8">
+    <h1 class="font-display text-3xl font-extrabold text-white">{t.notFound.title}</h1>
+    <p class="mt-2 text-mist">{t.notFound.subtitle}</p>
+    <a
+      href="/"
+      class="mt-6 inline-block rounded-full bg-teal px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-teal-bright"
+    >
+      {t.notFound.home}
+    </a>
+  </main>
+  <SiteFooter lang="en" t={t} />
 </Base>

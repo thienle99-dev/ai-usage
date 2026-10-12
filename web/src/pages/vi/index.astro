@@ -1,13 +1,20 @@
 ---
 import Base from '../../layouts/Base.astro';
+import SiteHeader from '../../components/SiteHeader.astro';
+import SiteFooter from '../../components/SiteFooter.astro';
 import Hero from '../../components/Hero.astro';
 import Sections from '../../components/Sections.astro';
-import { vi } from '../../i18n/vi';
+import { messages } from '../../lib/i18n';
 
 const repo = 'https://github.com/thienle99-dev/ai-usage';
+const t = messages.vi;
 ---
 
-<Base lang="vi" title={vi.meta.tagline} description={vi.meta.description} path="/vi/">
-  <Hero t={vi} releasesHref="/vi/releases" repo={repo} />
-  <Sections t={vi} />
+<Base lang="vi" title={t.meta.tagline} description={t.meta.description} path="/vi/">
+  <SiteHeader lang="vi" t={t} />
+  <main id="main">
+    <Hero t={t} releasesHref="/vi/releases" repo={repo} />
+    <Sections t={t} />
+  </main>
+  <SiteFooter lang="vi" t={t} />
 </Base>

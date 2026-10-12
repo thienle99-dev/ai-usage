@@ -1,6 +1,9 @@
 ---
-import { en, type Lang } from '../i18n/en';
-import { vi } from '../i18n/vi';
+import '../styles/global.css';
+import ScrollProgress from '../components/ScrollProgress.astro';
+import ScrollReveal from '../components/ScrollReveal.astro';
+import { withBase } from '../lib/paths';
+import { messages, type Lang } from '../lib/i18n';
 
 interface Props {
   lang: Lang;
@@ -9,13 +12,9 @@ interface Props {
   path: string;
 }
 
-const { lang, title, description, path } = Astro.props;
-const t = lang === 'vi' ? vi : en;
-const other: Lang = lang === 'vi' ? 'en' : 'vi';
-const otherPath = lang === 'vi' ? path.replace(/^\/vi(?=\/|$)/, '') || '/' : `/vi${path === '/' ? '' : path}`;
-const repo = 'https://github.com/thienle99-dev/ai-usage';
-const home = lang === 'vi' ? '/vi/' : '/';
-const releases = lang === 'vi' ? '/vi/releases' : '/releases';
+const { lang, title, description } = Astro.props;
+const a11y = messages[lang].a11y;
+const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
 ---
 
 <!doctype html>
@@ -24,208 +23,30 @@ const releases = lang === 'vi' ? '/vi/releases' : '/releases';
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>{title} — {t.meta.name}</title>
+    <meta name="theme-color" content="#101415" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    {canonical && <link rel="canonical" href={canonical} />}
+    <link rel="icon" type="image/svg+xml" href={withBase('favicon.svg')} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <meta name="generator" content={Astro.generator} />
+    <title>{title}</title>
   </head>
-  <body>
-    <header class="nav">
-      <a class="brand" href={home}>
-        <svg viewBox="0 0 64 64" width="26" height="26" aria-hidden="true">
-          <defs>
-            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#218B7E"></stop>
-              <stop offset="1" stop-color="#B77450"></stop>
-            </linearGradient>
-          </defs>
-          <rect x="4" y="4" width="56" height="56" rx="14" fill="url(#lg)"></rect>
-          <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round">
-            <line x1="20" y1="44" x2="20" y2="30"></line>
-            <line x1="32" y1="44" x2="32" y2="22"></line>
-            <line x1="44" y1="44" x2="44" y2="14"></line>
-          </g>
-        </svg>
-        <span>{t.meta.name}</span>
-      </a>
-      <nav aria-label="primary">
-        <a href={`${home}#features`}>{t.nav.features}</a>
-        <a href={`${home}#providers`}>{t.nav.providers}</a>
-        <a href={`${home}#privacy`}>{t.nav.privacy}</a>
-        <a href={`${home}#install`}>{t.nav.install}</a>
-        <a href={releases}>{t.nav.releases}</a>
-      </nav>
-      <div class="nav-right">
-        <a class="lang" href={otherPath} hreflang={other} title={t.nav.language}>
-          {other === 'vi' ? 'Tiếng Việt' : 'English'}
-        </a>
-        <a class="github" href={repo}>GitHub</a>
-      </div>
-    </header>
-    <main>
-      <slot />
-    </main>
-    <footer>
-      <div class="foot-grid">
-        <div>
-          <strong>{t.meta.name}</strong>
-          <p>{t.footer.tagline}</p>
-        </div>
-        <div class="foot-links">
-          <a href={releases}>{t.footer.releases}</a>
-          <a href={repo}>{t.footer.source}</a>
-          <a href={`${repo}/issues`}>{t.footer.issues}</a>
-        </div>
-      </div>
-      <p class="license">{t.footer.license}</p>
-    </footer>
+  <body class="bg-atmosphere">
+    <ScrollProgress label={a11y.pageScroll} />
+    <ScrollReveal />
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-teal focus:px-3 focus:py-2 focus:text-ink"
+    >
+      {a11y.skipToContent}
+    </a>
+    <slot />
   </body>
 </html>
-
-<style is:global>
-  :root {
-    color-scheme: light dark;
-    --bg: #f6f7f9;
-    --card: #ffffff;
-    --elevated: #eceef1;
-    --separator: #e2e4e9;
-    --primary: #202127;
-    --secondary: #676b75;
-    --muted: #9296a0;
-    --codex: #218b7e;
-    --claude: #b77450;
-    --warning: #bd8124;
-    --critical: #cd4747;
-    --track: #e2e4e9;
-    --radius: 14px;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #151619;
-      --card: #202126;
-      --elevated: #292b31;
-      --separator: #34363d;
-      --primary: #f2f2f4;
-      --secondary: #a0a3ad;
-      --muted: #717580;
-      --codex: #55b8a6;
-      --claude: #d99a76;
-      --warning: #e4ad55;
-      --critical: #eb6a6a;
-      --track: #34363d;
-    }
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--primary);
-    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Inter, sans-serif;
-    line-height: 1.6;
-  }
-  .nav {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    padding: 0.8rem 1.5rem;
-    background: color-mix(in srgb, var(--bg) 85%, transparent);
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--separator);
-  }
-  .nav .brand {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-    font-weight: 700;
-    color: var(--primary);
-    text-decoration: none;
-    white-space: nowrap;
-  }
-  .nav nav { display: flex; gap: 1.1rem; margin-left: auto; }
-  .nav nav a, .nav-right a {
-    color: var(--secondary);
-    text-decoration: none;
-    font-size: 0.92rem;
-  }
-  .nav nav a:hover, .nav-right a:hover { color: var(--primary); }
-  .nav-right { display: flex; align-items: center; gap: 0.9rem; }
-  .github {
-    border: 1px solid var(--separator);
-    border-radius: 8px;
-    padding: 0.25rem 0.7rem;
-    background: var(--card);
-  }
-  main { max-width: 1020px; margin: 0 auto; padding: 0 1.5rem 4rem; }
-  section { padding: 3.2rem 0 0.4rem; }
-  section > h2 { font-size: 1.7rem; margin: 0 0 0.3rem; letter-spacing: -0.01em; }
-  section > p.sub { color: var(--secondary); margin: 0 0 1.6rem; max-width: 640px; }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--separator);
-    border-radius: var(--radius);
-    padding: 1.15rem 1.25rem;
-  }
-  .grid { display: grid; gap: 1rem; }
-  .grid.two { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
-  .grid.three { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-  .card h3 { margin: 0 0 0.4rem; font-size: 1.02rem; }
-  .card p { margin: 0.3rem 0 0; color: var(--secondary); font-size: 0.93rem; }
-  .tag {
-    display: inline-block;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.15rem 0.6rem;
-    border-radius: 999px;
-    margin-bottom: 0.55rem;
-  }
-  .tag.codex { color: var(--codex); background: color-mix(in srgb, var(--codex) 12%, transparent); }
-  .tag.claude { color: var(--claude); background: color-mix(in srgb, var(--claude) 12%, transparent); }
-  .tag.muted { color: var(--secondary); background: var(--elevated); }
-  .btn {
-    display: inline-block;
-    padding: 0.6rem 1.3rem;
-    border-radius: 10px;
-    font-weight: 600;
-    text-decoration: none;
-    font-size: 0.95rem;
-  }
-  .btn.primary { background: var(--primary); color: var(--bg); }
-  .btn.ghost { border: 1px solid var(--separator); color: var(--primary); background: var(--card); }
-  footer {
-    border-top: 1px solid var(--separator);
-    padding: 2rem 1.5rem 3rem;
-    max-width: 1020px;
-    margin: 0 auto;
-    color: var(--secondary);
-    font-size: 0.9rem;
-  }
-  .foot-grid { display: flex; justify-content: space-between; gap: 2rem; flex-wrap: wrap; }
-  .foot-grid strong { color: var(--primary); }
-  .foot-links { display: flex; gap: 1.2rem; }
-  .foot-links a { color: var(--secondary); text-decoration: none; }
-  .foot-links a:hover { color: var(--primary); }
-  .license { color: var(--muted); font-size: 0.82rem; max-width: 640px; }
-  pre {
-    background: var(--elevated);
-    border: 1px solid var(--separator);
-    border-radius: 10px;
-    padding: 0.9rem 1.1rem;
-    overflow-x: auto;
-    font-size: 0.85rem;
-  }
-  code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; }
-  details.card { margin-bottom: 0.7rem; }
-  details.card summary { cursor: pointer; font-weight: 600; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.92rem; }
-  th, td { text-align: left; padding: 0.6rem 0.4rem; border-bottom: 1px solid var(--separator); vertical-align: top; }
-  th { color: var(--muted); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; }
-  td:first-child { font-weight: 600; white-space: nowrap; }
-  td:last-child, th:last-child { color: var(--secondary); }
-  @media (max-width: 760px) {
-    .nav nav { display: none; }
-    .nav { gap: 1rem; }
-    .nav-right { margin-left: auto; }
-  }
-</style>

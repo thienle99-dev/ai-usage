@@ -765,6 +765,7 @@ struct SettingsWindowView: View {
     @State private var openCodeCredentialMessage: String?
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
     @State private var codexHomeMessage: String?
+    @State private var providerConfigMessage: String?
 
     var body: some View {
         @Bindable var store = store
@@ -888,6 +889,21 @@ struct SettingsWindowView: View {
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 6)
+                            if let configURL = ProviderConfigFile.url(for: provider) {
+                                Button("Open Config") {
+                                    if NSWorkspace.shared.open(configURL) {
+                                        providerConfigMessage = nil
+                                    } else {
+                                        providerConfigMessage = "Could not open \(provider.displayName) config at \(configURL.path)."
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(!ProviderConfigFile.exists(configURL))
+                                .help(ProviderConfigFile.exists(configURL)
+                                    ? "Open \(configURL.path)"
+                                    : "Config file not found: \(configURL.path)")
+                            }
                             ConnectionStatusView(
                                 status: store.wrappedValue.status(for: provider),
                                 isRefreshing: store.wrappedValue.refreshing.contains(provider)
@@ -907,6 +923,13 @@ struct SettingsWindowView: View {
                             .labelsHidden()
                         }
                         .padding(.vertical, 7)
+                    }
+                    if let providerConfigMessage {
+                        Text(providerConfigMessage)
+                            .font(.system(size: 11))
+                            .foregroundStyle(UsageTheme.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
                     }
                 }
             }

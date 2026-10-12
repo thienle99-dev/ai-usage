@@ -1,115 +1,134 @@
 ---
-import type { Dict } from '../i18n/en';
+import type { Messages } from '../lib/i18n';
 
 interface Props {
-  t: Dict;
+  t: Messages;
 }
 
 const { t } = Astro.props;
+
+const tagTone: Record<string, string> = {
+  codex: 'text-teal-bright bg-teal/15',
+  claude: 'text-sand bg-[#d99a76]/15',
+  muted: 'text-mist bg-white/10',
+};
 ---
 
-<section id="providers">
-  <h2>{t.providers.title}</h2>
-  <p class="sub">{t.providers.subtitle}</p>
-  <div class="grid two">
+<section id="features" class="mx-auto max-w-6xl scroll-mt-20 px-4 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.features.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.features.title}</h2>
+    <p class="mt-2 max-w-2xl text-mist">{t.features.subtitle}</p>
+  </div>
+  <div class="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {
-      t.providers.items.map((p) => (
-        <div class="card">
-          <span class={`tag ${p.color}`}>{p.source}</span>
-          <h3>{p.name}</h3>
-          <p>{p.detail}</p>
+      t.features.items.map((f, i) => (
+        <div
+          data-reveal
+          data-reveal-delay={(i % 3) * 90}
+          class="interactive-lift rounded-2xl border border-white/10 bg-panel/70 p-5 hover:border-teal/40"
+        >
+          <h3 class="font-display text-base font-bold text-white">{f.title}</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-mist">{f.detail}</p>
         </div>
       ))
     }
   </div>
 </section>
 
-<section id="features">
-  <h2>{t.features.title}</h2>
-  <p class="sub">{t.features.subtitle}</p>
-  <div class="grid three">
+<section id="providers" class="mx-auto max-w-6xl scroll-mt-20 px-4 pt-16 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.providers.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.providers.title}</h2>
+    <p class="mt-2 max-w-2xl text-mist">{t.providers.subtitle}</p>
+  </div>
+  <div class="mt-7 grid gap-4 sm:grid-cols-2">
     {
-      t.features.items.map((f) => (
-        <div class="card">
-          <h3>{f.title}</h3>
-          <p>{f.detail}</p>
+      t.providers.items.map((p, i) => (
+        <div
+          data-reveal
+          data-reveal-delay={(i % 2) * 90}
+          class="interactive-lift rounded-2xl border border-white/10 bg-panel/70 p-5 hover:border-teal/40"
+        >
+          <span class={`mb-2.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${tagTone[p.color] ?? tagTone.muted}`}>
+            {p.source}
+          </span>
+          <h3 class="font-display text-base font-bold text-white">{p.name}</h3>
+          <p class="mt-1.5 text-sm leading-relaxed text-mist">{p.detail}</p>
         </div>
       ))
     }
   </div>
 </section>
 
-<section id="privacy">
-  <h2>{t.privacy.title}</h2>
-  <p class="sub">{t.privacy.subtitle}</p>
-  <div class="card">
-    <table>
+<section id="privacy" class="mx-auto max-w-6xl scroll-mt-20 px-4 pt-16 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.privacy.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.privacy.title}</h2>
+    <p class="mt-2 max-w-2xl text-mist">{t.privacy.subtitle}</p>
+  </div>
+  <div data-reveal class="mt-7 overflow-x-auto rounded-2xl border border-white/10 bg-panel/70">
+    <table class="w-full border-collapse text-sm">
       <thead>
-        <tr>
-          <th>{t.providers.title}</th>
-          <th>{t.privacy.title}</th>
+        <tr class="border-b border-white/10 text-left">
+          <th class="px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-mist/70">{t.providers.title}</th>
+          <th class="px-5 py-3 font-mono text-xs font-semibold uppercase tracking-wider text-mist/70">{t.privacy.title}</th>
         </tr>
       </thead>
       <tbody>
         {
           t.privacy.rows.map((r) => (
-            <tr>
-              <td>{r[0]}</td>
-              <td>{r[1]}</td>
+            <tr class="border-b border-white/5 last:border-0">
+              <td class="px-5 py-3 font-semibold text-white">{r[0]}</td>
+              <td class="px-5 py-3 text-mist">{r[1]}</td>
             </tr>
           ))
         }
       </tbody>
     </table>
   </div>
-  <ul class="principles">
+  <ul class="mt-5 list-disc space-y-1.5 pl-5 text-sm text-mist">
     {t.privacy.principles.map((p) => <li>{p}</li>)}
   </ul>
 </section>
 
-<section id="install">
-  <h2>{t.install.title}</h2>
-  <p class="sub">{t.install.subtitle} {t.install.requirements}</p>
-  <div class="card">
-    <ol class="steps">
+<section id="install" class="mx-auto max-w-6xl scroll-mt-20 px-4 pt-16 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.install.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.install.title}</h2>
+    <p class="mt-2 max-w-2xl text-mist">{t.install.subtitle} {t.install.requirements}</p>
+  </div>
+  <div data-reveal class="mt-7 rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+    <ol class="m-0 list-none space-y-4 p-0">
       {
         t.install.steps.map((s, i) => (
           <li>
-            <span>{s}</span>
-            <pre><code>{t.install.commands[i]}</code></pre>
+            <p class="text-sm font-semibold text-white">
+              <span class="mr-1.5 text-teal-bright">{i + 1}.</span>
+              {s}
+            </p>
+            <pre class="font-mono mt-2 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-3 text-[0.83rem] text-fog"><code>{t.install.commands[i]}</code></pre>
           </li>
         ))
       }
     </ol>
-    <p class="binaries">{t.install.binaries}</p>
+    <p class="mt-3 text-[0.83rem] text-mist/70">{t.install.binaries}</p>
   </div>
 </section>
 
-<section id="faq">
-  <h2>{t.faq.title}</h2>
-  <div>
+<section id="faq" class="mx-auto max-w-6xl scroll-mt-20 px-4 pb-20 pt-16 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.faq.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.faq.title}</h2>
+  </div>
+  <div class="mt-7 space-y-2.5">
     {
       t.faq.items.map((f) => (
-        <details class="card">
-          <summary>{f.q}</summary>
-          <p>{f.a}</p>
+        <details data-reveal class="group rounded-2xl border border-white/10 bg-panel/70 px-5 py-4 open:border-teal/40">
+          <summary class="cursor-pointer text-sm font-semibold text-white marker:text-teal-bright">{f.q}</summary>
+          <p class="mt-2 text-sm leading-relaxed text-mist">{f.a}</p>
         </details>
       ))
     }
   </div>
 </section>
-
-<style>
-  .principles { color: var(--secondary); font-size: 0.93rem; margin: 1.2rem 0 0; padding-left: 1.2rem; }
-  .principles li { margin-bottom: 0.4rem; }
-  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
-  .steps li { counter-increment: step; margin-bottom: 1rem; }
-  .steps li:last-child { margin-bottom: 0.4rem; }
-  .steps li > span::before {
-    content: counter(step) '. ';
-    font-weight: 700;
-    color: var(--codex);
-  }
-  .steps pre { margin-top: 0.45rem; }
-  .binaries { color: var(--muted); font-size: 0.85rem; }
-</style>

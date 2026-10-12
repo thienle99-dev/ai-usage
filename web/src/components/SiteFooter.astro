@@ -1,0 +1,29 @@
+---
+import type { Lang, Messages } from '../lib/i18n';
+import { langBasePath } from '../lib/i18n';
+import { withBase } from '../lib/paths';
+
+interface Props {
+  lang: Lang;
+  t: Messages;
+}
+
+const { lang, t } = Astro.props;
+const releasesHref = withBase(langBasePath('/releases', lang));
+const repo = 'https://github.com/thienle99-dev/ai-usage';
+---
+
+<footer class="relative z-10 mx-auto max-w-6xl px-4 pb-12 pt-16 sm:px-8">
+  <div class="flex flex-wrap justify-between gap-6 border-t border-white/10 pt-8">
+    <div class="max-w-sm">
+      <p class="font-display text-base font-bold text-white">{t.meta.name}</p>
+      <p class="mt-1 text-sm text-mist">{t.footer.tagline}</p>
+    </div>
+    <nav class="flex gap-5 text-sm text-mist" aria-label={t.footer.releases}>
+      <a class="transition-colors hover:text-white" href={releasesHref}>{t.footer.releases}</a>
+      <a class="transition-colors hover:text-white" href={repo}>{t.footer.source}</a>
+      <a class="transition-colors hover:text-white" href={`${repo}/issues`}>{t.footer.issues}</a>
+    </nav>
+  </div>
+  <p class="mt-6 max-w-2xl text-xs leading-relaxed text-mist/70">{t.footer.license}</p>
+</footer>
