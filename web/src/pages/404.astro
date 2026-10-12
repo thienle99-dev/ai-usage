@@ -1,0 +1,12 @@
+---
+import Base from '../layouts/Base.astro';
+import { en } from '../i18n/en';
+---
+
+<Base lang="en" title={en.notFound.title} description={en.notFound.subtitle} path="/404">
+  <section>
+    <h2>{en.notFound.title}</h2>
+    <p class="sub">{en.notFound.subtitle}</p>
+    <a class="btn primary" href="/">{en.notFound.home}</a>
+  </section>
+</Base>

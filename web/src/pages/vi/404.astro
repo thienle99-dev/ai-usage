@@ -1,0 +1,12 @@
+---
+import Base from '../../layouts/Base.astro';
+import { vi } from '../../i18n/vi';
+---
+
+<Base lang="vi" title={vi.notFound.title} description={vi.notFound.subtitle} path="/vi/404">
+  <section>
+    <h2>{vi.notFound.title}</h2>
+    <p class="sub">{vi.notFound.subtitle}</p>
+    <a class="btn primary" href="/vi/">{vi.notFound.home}</a>
+  </section>
+</Base>

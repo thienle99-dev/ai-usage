@@ -1,43 +1,38 @@
-# Astro Starter Kit: Minimal
+# AI Usage Monitor — Website
+
+Astro static site for the product landing page and releases. Ships to Vercel.
+
+## Develop
 
 ```sh
-npm create astro@latest -- --template minimal
+cd web
+npm install
+npm run dev      # http://localhost:4321
+npm run build    # static output in web/dist/
+npm run preview  # serve the build locally
 ```
 
-> 🧑‍🚀 **Seasoned astronaut?** Delete this file. Have fun!
+Requires Node 22.12+.
 
-## 🚀 Project Structure
+## Structure
 
-Inside of your Astro project, you'll see the following folders and files:
+- `src/pages/index.astro` — English landing (`/`)
+- `src/pages/vi/index.astro` — Vietnamese landing (`/vi/`)
+- `src/pages/releases.astro`, `src/pages/vi/releases.astro` — changelog + downloads
+- `src/pages/404.astro`, `src/pages/vi/404.astro`
+- `src/i18n/en.ts`, `src/i18n/vi.ts` — all copy; keep both shapes identical (`vi` is typed as `typeof en`, so the build fails on drift)
+- `src/content/releases/*.md` — one file per version (`version`, `date`, `highlights`, optional `highlightsVi`)
+- `src/layouts/Base.astro` — shell, nav, footer, design tokens (mirrors `Sources/AIUsage/Theme.swift`)
+- `src/components/` — `Hero.astro` (CSS interface mock-up), `Sections.astro` (providers/features/privacy/install/FAQ)
 
-```text
-/
-├── public/
-├── src/
-│   └── pages/
-│       └── index.astro
-└── package.json
-```
+## Add a release
 
-Astro looks for `.astro` or `.md` files in the `src/pages/` directory. Each page is exposed as a route based on its file name.
+1. Add `src/content/releases/vX.Y.Z.md` with `version`, `date`, `highlights` (+ `highlightsVi` when translated).
+2. Publish the GitHub release with attached binaries (see `docs/RELEASING.md`) — the page links each version to its tag.
+3. `npm run build` to verify, push; Vercel deploys automatically.
 
-There's nothing special about `src/components/`, but that's where we like to put any Astro/React/Vue/Svelte/Preact components.
+## Deploy (Vercel)
 
-Any static assets, like images, can be placed in the `public/` directory.
-
-## 🧞 Commands
-
-All commands are run from the root of the project, from a terminal:
-
-| Command                   | Action                                           |
-| :------------------------ | :----------------------------------------------- |
-| `npm install`             | Installs dependencies                            |
-| `npm run dev`             | Starts local dev server at `localhost:4321`      |
-| `npm run build`           | Build your production site to `./dist/`          |
-| `npm run preview`         | Preview your build locally, before deploying     |
-| `npm run astro ...`       | Run CLI commands like `astro add`, `astro check` |
-| `npm run astro -- --help` | Get help using the Astro CLI                     |
-
-## 👀 Want to learn more?
-
-Feel free to check [our documentation](https://docs.astro.build) or jump into our [Discord server](https://astro.build/chat).
+- Import `github.com/thienle99-dev/ai-usage`, framework preset **Astro**.
+- Root Directory: `web`. Build command `npm run build` (default). No env vars needed.
+- Every push gets a preview deployment; `main` updates production.

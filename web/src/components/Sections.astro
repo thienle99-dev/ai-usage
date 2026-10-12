@@ -1,0 +1,115 @@
+---
+import type { Dict } from '../i18n/en';
+
+interface Props {
+  t: Dict;
+}
+
+const { t } = Astro.props;
+---
+
+<section id="providers">
+  <h2>{t.providers.title}</h2>
+  <p class="sub">{t.providers.subtitle}</p>
+  <div class="grid two">
+    {
+      t.providers.items.map((p) => (
+        <div class="card">
+          <span class={`tag ${p.color}`}>{p.source}</span>
+          <h3>{p.name}</h3>
+          <p>{p.detail}</p>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<section id="features">
+  <h2>{t.features.title}</h2>
+  <p class="sub">{t.features.subtitle}</p>
+  <div class="grid three">
+    {
+      t.features.items.map((f) => (
+        <div class="card">
+          <h3>{f.title}</h3>
+          <p>{f.detail}</p>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<section id="privacy">
+  <h2>{t.privacy.title}</h2>
+  <p class="sub">{t.privacy.subtitle}</p>
+  <div class="card">
+    <table>
+      <thead>
+        <tr>
+          <th>{t.providers.title}</th>
+          <th>{t.privacy.title}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          t.privacy.rows.map((r) => (
+            <tr>
+              <td>{r[0]}</td>
+              <td>{r[1]}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <ul class="principles">
+    {t.privacy.principles.map((p) => <li>{p}</li>)}
+  </ul>
+</section>
+
+<section id="install">
+  <h2>{t.install.title}</h2>
+  <p class="sub">{t.install.subtitle} {t.install.requirements}</p>
+  <div class="card">
+    <ol class="steps">
+      {
+        t.install.steps.map((s, i) => (
+          <li>
+            <span>{s}</span>
+            <pre><code>{t.install.commands[i]}</code></pre>
+          </li>
+        ))
+      }
+    </ol>
+    <p class="binaries">{t.install.binaries}</p>
+  </div>
+</section>
+
+<section id="faq">
+  <h2>{t.faq.title}</h2>
+  <div>
+    {
+      t.faq.items.map((f) => (
+        <details class="card">
+          <summary>{f.q}</summary>
+          <p>{f.a}</p>
+        </details>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .principles { color: var(--secondary); font-size: 0.93rem; margin: 1.2rem 0 0; padding-left: 1.2rem; }
+  .principles li { margin-bottom: 0.4rem; }
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  .steps li { counter-increment: step; margin-bottom: 1rem; }
+  .steps li:last-child { margin-bottom: 0.4rem; }
+  .steps li > span::before {
+    content: counter(step) '. ';
+    font-weight: 700;
+    color: var(--codex);
+  }
+  .steps pre { margin-top: 0.45rem; }
+  .binaries { color: var(--muted); font-size: 0.85rem; }
+</style>

@@ -1,0 +1,56 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../layouts/Base.astro';
+import { en } from '../i18n/en';
+
+const repo = 'https://github.com/thienle99-dev/ai-usage';
+const releases = (await getCollection('releases')).sort((a, b) =>
+  b.data.version.localeCompare(a.data.version, undefined, { numeric: true }),
+);
+---
+
+<Base lang="en" title={en.releasesPage.title} description={en.releasesPage.subtitle} path="/releases">
+  <section>
+    <h2>{en.releasesPage.title}</h2>
+    <p class="sub">{en.releasesPage.subtitle}</p>
+    {
+      releases.length === 0 ? (
+        <div class="card"><p>{en.releasesPage.empty}</p></div>
+      ) : (
+        <div class="grid">
+          {releases.map((r, i) => (
+            <article class="card">
+              <div class="rel-head">
+                <h3>v{r.data.version}</h3>
+                {i === 0 && <span class="tag codex">{en.releasesPage.latest}</span>}
+                <span class="date">{r.data.date}</span>
+              </div>
+              <ul>
+                {r.data.highlights.map((h) => <li>{h}</li>)}
+              </ul>
+              <a class="btn ghost" href={`${repo}/releases/tag/v${r.data.version}`}>
+                {en.releasesPage.downloadTag}
+              </a>
+            </article>
+          ))}
+        </div>
+      )
+    }
+    <div class="card build">
+      <p>{en.releasesPage.buildFromSource}</p>
+      <pre><code>{en.releasesPage.buildCommand}</code></pre>
+    </div>
+  </section>
+</Base>
+
+<style>
+  .rel-head { display: flex; align-items: center; gap: 0.7rem; }
+  .rel-head h3 { margin: 0; }
+  .rel-head .tag { margin: 0; }
+  .date { margin-left: auto; color: var(--muted); font-size: 0.85rem; }
+  ul { color: var(--secondary); font-size: 0.93rem; padding-left: 1.2rem; }
+  ul li { margin-bottom: 0.3rem; }
+  .btn { margin-top: 0.8rem; font-size: 0.85rem; padding: 0.45rem 1rem; }
+  .build { margin-top: 1rem; }
+  .build p { margin-top: 0; }
+</style>

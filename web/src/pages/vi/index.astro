@@ -1,0 +1,13 @@
+---
+import Base from '../../layouts/Base.astro';
+import Hero from '../../components/Hero.astro';
+import Sections from '../../components/Sections.astro';
+import { vi } from '../../i18n/vi';
+
+const repo = 'https://github.com/thienle99-dev/ai-usage';
+---
+
+<Base lang="vi" title={vi.meta.tagline} description={vi.meta.description} path="/vi/">
+  <Hero t={vi} releasesHref="/vi/releases" repo={repo} />
+  <Sections t={vi} />
+</Base>
