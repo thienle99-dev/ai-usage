@@ -29,7 +29,7 @@ final class ParserTests: XCTestCase {
     }
 
     func testClaudeExtraUsageCreditsPayload() throws {
-        let data = Data(#"{"five_hour":null,"seven_day":null,"extra_usage":{"is_enabled":true,"monthly_limit":60,"used_credits":0.4,"utilization":null,"currency":"USD"}}"#.utf8)
+        let data = Data(#"{"five_hour":null,"seven_day":null,"extra_usage":{"is_enabled":true,"monthly_limit":6000,"used_credits":40,"utilization":null,"currency":"USD"}}"#.utf8)
         let window = try XCTUnwrap(UsageParsing.claude(data).first)
         XCTAssertEqual(window.label, "Usage credits")
         XCTAssertEqual(window.utilization, 2.0 / 3.0, accuracy: 0.001)

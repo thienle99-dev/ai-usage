@@ -102,7 +102,9 @@ enum UsageParsing {
            let limit = number(extraUsage["monthly_limit"]), limit > 0 {
             let percent = number(extraUsage["utilization"]) ?? (used / limit * 100)
             let currency = (extraUsage["currency"] as? String) ?? "USD"
-            let amountDescription = "\(money(used, currency: currency)) / \(money(limit, currency: currency))"
+            // OAuth `extra_usage` reports monetary amounts in minor units
+            // (for USD, cents), while `utilization` is already a percentage.
+            let amountDescription = "\(money(used / 100, currency: currency)) / \(money(limit / 100, currency: currency))"
             if !result.contains(where: { $0.label == "Usage credits" }) {
                 result.append(UsageWindow(label: "Usage credits", utilization: min(100, max(0, percent)), resetsAt: nil, detail: amountDescription))
             }
