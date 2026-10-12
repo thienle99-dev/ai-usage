@@ -38,6 +38,17 @@ OpenCode usage uses the authenticated `opencode.ai` dashboard server functions t
 
 These provider endpoints/protocols are compatibility-sensitive and may change. Re-authenticate with the relevant CLI when the provider reports an authentication error. If Codex is unavailable, confirm `codex` is installed and can start `app-server`. If Claude usage is unavailable, sign in with Claude Code and try Refresh.
 
+## Quota-aware CLI preflight
+
+Use the bundled wrapper before a large CLI task. It reads the last local usage snapshot and never refreshes quota or calls a model:
+
+```sh
+./scripts/ai-usage preflight --provider codex --estimated-tokens 6000
+./scripts/ai-usage run --provider claude --estimated-tokens 6000 -- claude -p "Review this change"
+```
+
+Tasks estimated below 4,000 input tokens do not trigger a low-quota warning. For larger estimates, the wrapper compares the provider's most-used valid window with the warning threshold in Settings (70% by default). `run` asks for confirmation in an interactive terminal before launching the command; declining cancels it. If the snapshot is missing, older than 15 minutes, or marked with a local fetch error, the wrapper reports that quota could not be assessed and proceeds without a low-quota warning. Estimates are supplied by the caller; the wrapper does not inspect or store task prompts.
+
 ## Development notes
 
 - [Technical research and architecture plan](docs/TECHNICAL_PLAN.md)

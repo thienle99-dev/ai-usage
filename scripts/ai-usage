@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+if [ -n "${AI_USAGE_EXECUTABLE:-}" ] && [ -x "$AI_USAGE_EXECUTABLE" ]; then
+    exec "$AI_USAGE_EXECUTABLE" "$@"
+fi
+
+for executable in \
+    "/Applications/AI Usage Monitor.app/Contents/MacOS/AIUsage" \
+    "$repo_dir/dist/AI Usage Monitor.app/Contents/MacOS/AIUsage"
+do
+    if [ -x "$executable" ]; then
+        exec "$executable" "$@"
+    fi
+done
+
+exec swift run --package-path "$repo_dir" AIUsage "$@"

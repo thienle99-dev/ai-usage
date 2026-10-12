@@ -1,8 +1,17 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 @main struct AIUsageApp: App {
-    @State private var store = UsageStore()
+    @State private var store: UsageStore
+
+    init() {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        if arguments.first == "preflight" || arguments.first == "run" {
+            Darwin.exit(QuotaAwareCLI.run(arguments: arguments))
+        }
+        _store = State(initialValue: UsageStore())
+    }
 
     var body: some Scene {
         MenuBarExtra {

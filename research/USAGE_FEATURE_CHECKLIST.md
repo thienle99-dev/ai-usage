@@ -7,7 +7,7 @@ Danh sách này ghi lại các tính năng đáng cân nhắc đưa vào AI Usag
 - [x] **Auto-start phiên 5 giờ:** gửi prompt nhỏ sau khi phát hiện quota reset. Hiện hỗ trợ Claude Code, Codex và Antigravity; mặc định tắt. Xem `Sources/AIUsage/UsageWindowAutoStarter.swift`.
 - [x] **Thông báo quota/reset:** thông báo hệ thống khi quota sắp hết, chạm giới hạn hoặc được khôi phục; cần chống gửi lặp theo provider và cửa sổ quota. Đã làm: `Sources/AIUsage/QuotaNotifier.swift` (policy warning/critical/restored + episode chống lặp theo provider/window, hysteresis 5 điểm khi recover), toggle off-by-default trong Settings, deliver qua `UNUserNotificationCenter`. Xem `testQuotaPolicy*`, `testQuotaNotifications*`.
 - [x] **Cảnh báo sự cố dịch vụ:** kiểm tra feed status công khai mỗi 5 phút cho provider đang bật; hiển thị incident riêng với lỗi fetch quota cục bộ và link về status page. Đã làm trong `Sources/AIUsage/ServiceStatus.swift`, `UsageStore.swift`, usage card và Settings. Nguồn: OpenAI, Claude, Cursor, GitHub Copilot, Google Cloud cho Gemini/Antigravity và RSS xAI cho Grok. OpenCode, Windsurf, Cline và Roo chưa có feed được nối.
-- [ ] **Quota-aware mode:** cảnh báo trước tác vụ lớn khi quota thấp. Cần tích hợp riêng với CLI; không biến refresh quota thành model request.
+- [x] **Quota-aware mode:** `scripts/ai-usage run` bọc lệnh CLI và hỏi xác nhận trước tác vụ lớn khi quota gần ngưỡng cảnh báo; `preflight` chỉ đọc snapshot local, không refresh quota và không gửi model request. Ước lượng token do người dùng truyền; thiếu/stale snapshot thì báo chưa đánh giá được. Hướng dẫn trong README.
 
 ## Tích hợp CLI và phiên làm việc
 
