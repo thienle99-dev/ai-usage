@@ -16,14 +16,24 @@ Requires Node 22.12+.
 
 ## Structure
 
+Shares the dbplus site language: Tailwind v4 + dark-first theme (`src/styles/global.css`),
+Bricolage Grotesque / Figtree / IBM Plex Mono, `SiteHeader` / `SiteFooter` /
+`LangSwitcher`, `ScrollProgress` + `ScrollReveal`, `lib/i18n.ts` (`Messages` type +
+`withLang` helpers), `lib/paths.ts` (`withBase`), `lib/downloads.ts` (pinned
+`currentRelease` + asset URLs). Brand accents are teal/sand from
+`Sources/AIUsage/Theme.swift` instead of dbplus blue.
+
 - `src/pages/index.astro` — English landing (`/`)
 - `src/pages/vi/index.astro` — Vietnamese landing (`/vi/`)
 - `src/pages/releases.astro`, `src/pages/vi/releases.astro` — changelog + downloads
 - `src/pages/404.astro`, `src/pages/vi/404.astro`
-- `src/i18n/en.ts`, `src/i18n/vi.ts` — all copy; keep both shapes identical (`vi` is typed as `typeof en`, so the build fails on drift)
-- `src/content/releases/*.md` — one file per version (`version`, `date`, `highlights`, optional `highlightsVi`)
-- `src/layouts/Base.astro` — shell, nav, footer, design tokens (mirrors `Sources/AIUsage/Theme.swift`)
-- `src/components/` — `Hero.astro` (CSS interface mock-up), `Sections.astro` (providers/features/privacy/install/FAQ)
+- `src/lib/i18n.ts` — all copy as `messages: Record<Lang, Messages>`; the build
+  fails on EN/VI shape drift
+- `src/content/releases/*.md` — one file per version (`version`, `date`,
+  `highlights`, optional `highlightsVi`)
+- `src/layouts/Base.astro` — shell, fonts, OG tags, skip link
+- `src/components/` — `Hero.astro` (CSS interface mock-up), `Sections.astro`
+  (providers/features/privacy/install/FAQ)
 
 ## Add a release
 

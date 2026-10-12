@@ -26,8 +26,12 @@ import ServiceManagement
     var menuBarMode: MenuBarDisplayMode = .combinedUsage {
         didSet { defaults.set(menuBarMode.rawValue, forKey: "menuBarMode") }
     }
+    var menuBarProvider: Provider = .claude {
+        didSet { defaults.set(menuBarProvider.rawValue, forKey: "menuBarProvider") }
+    }
     var appearance = "system" { didSet { defaults.set(appearance, forKey: "appearance") } }
     var autoStartUsageWindow = false { didSet { defaults.set(autoStartUsageWindow, forKey: "autoStartUsageWindow") } }
+    var quotaNotificationsEnabled = false { didSet { defaults.set(quotaNotificationsEnabled, forKey: "quotaNotificationsEnabled") } }
     var launchAtLoginEnabled = false
     var launchAtLoginError: String?
     private(set) var lastRefreshAttempt: Date?
@@ -50,6 +54,7 @@ import ServiceManagement
     @ObservationIgnored private let codexAuthFileURL: URL
     @ObservationIgnored private let fileModificationDate: @Sendable (String) -> Date?
     @ObservationIgnored private let autoStartRunner: any UsageWindowStartCommandRunning
+    @ObservationIgnored private let quotaDeliverer: any QuotaNotificationDelivering
     @ObservationIgnored private var codexAuthWatcher: Task<Void, Never>?
     @ObservationIgnored private var lastSeenCodexAuthMtime: Date?
 
@@ -81,7 +86,8 @@ import ServiceManagement
         startImmediately: Bool = true,
         codexAuthFileURL: URL? = nil,
         fileModificationDate: (@Sendable (String) -> Date?)? = nil,
-        autoStartRunner: any UsageWindowStartCommandRunning = LocalUsageWindowStartCommandRunner()
+        autoStartRunner: any UsageWindowStartCommandRunning = LocalUsageWindowStartCommandRunner(),
+        quotaDeliverer: any QuotaNotificationDelivering = UserNotificationQuotaDeliverer()
     ) {
         self.providers = providers
         self.defaults = defaults
@@ -90,6 +96,7 @@ import ServiceManagement
         self.codexAuthFileURL = codexAuthFileURL ?? Self.defaultCodexAuthFileURL()
         self.fileModificationDate = fileModificationDate ?? Self.defaultModificationDate
         self.autoStartRunner = autoStartRunner
+        self.quotaDeliverer = quotaDeliverer
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
         }
@@ -108,8 +115,12 @@ import ServiceManagement
         } else {
             menuBarMode = MenuBarDisplayMode(legacyValue: defaults.string(forKey: "menuBarStyle") ?? "Highest usage")
         }
+        if let raw = defaults.string(forKey: "menuBarProvider"), let provider = Provider(rawValue: raw) {
+            menuBarProvider = provider
+        }
         appearance = (defaults.string(forKey: "appearance") ?? "system").lowercased()
         autoStartUsageWindow = defaults.bool(forKey: "autoStartUsageWindow")
+        quotaNotificationsEnabled = defaults.bool(forKey: "quotaNotificationsEnabled")
         if let data = defaults.data(forKey: "codexHomes"),
            let homes = try? JSONDecoder().decode([CodexHome].self, from: data) {
             codexHomes = homes
@@ -150,6 +161,7 @@ import ServiceManagement
                     snapshot.status = .connected
                     snapshots[provider] = snapshot
                     maybeStartUsageWindow(for: snapshot)
+                    maybeNotifyQuota(for: snapshot)
                     if provider == .codex {
                         noteSuccessfulCodexFetch(snapshot)
                     }
@@ -185,6 +197,46 @@ import ServiceManagement
         let runner = autoStartRunner
         let provider = snapshot.provider
         Task { await runner.run(provider: provider) }
+    }
+
+    private func maybeNotifyQuota(for snapshot: UsageSnapshot) {
+        guard quotaNotificationsEnabled,
+              visibleProviders.contains(snapshot.provider),
+              !snapshot.isStale else { return }
+        for window in snapshot.validWindows {
+            guard let utilization = window.validUtilization else { continue }
+            let base = "quotaNotification.\(snapshot.provider.rawValue).\(window.label)"
+            var episode = QuotaNotificationPolicy.Episode(
+                warned: defaults.bool(forKey: base + ".warned"),
+                critical: defaults.bool(forKey: base + ".critical")
+            )
+            let (event, updated) = QuotaNotificationPolicy.evaluate(
+                utilization: utilization,
+                warningThreshold: warningThreshold,
+                criticalThreshold: criticalThreshold,
+                episode: episode
+            )
+            episode = updated
+            guard let event else {
+                // Persist cleared state so a recovered episode re-arms.
+                defaults.set(episode.warned, forKey: base + ".warned")
+                defaults.set(episode.critical, forKey: base + ".critical")
+                continue
+            }
+            let threshold = event == .critical ? criticalThreshold : warningThreshold
+            // Persist before dispatch so overlapping refreshes cannot double-notify.
+            defaults.set(episode.warned, forKey: base + ".warned")
+            defaults.set(episode.critical, forKey: base + ".critical")
+            let notification = QuotaNotification(
+                provider: snapshot.provider,
+                windowLabel: window.label,
+                kind: event,
+                utilization: utilization,
+                threshold: threshold
+            )
+            let deliverer = quotaDeliverer
+            Task { await deliverer.deliver(notification) }
+        }
     }
 
     func schedule() {

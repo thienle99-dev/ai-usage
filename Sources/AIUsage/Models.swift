@@ -157,6 +157,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case combinedUsage
     case providerSpecific
     case criticalProviderOnly
+    case singleProvider
 
     var id: String { rawValue }
     var title: String {
@@ -165,6 +166,7 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .combinedUsage: "Combined usage"
         case .providerSpecific: "Provider-specific"
         case .criticalProviderOnly: "Critical provider only"
+        case .singleProvider: "Single provider"
         }
     }
 
@@ -280,6 +282,72 @@ enum UsageAggregation {
     static func maximum(for provider: Provider, in snapshots: [Provider: UsageSnapshot], enabled: Set<Provider>) -> Double? {
         guard enabled.contains(provider), let snapshot = snapshots[provider] else { return nil }
         return snapshot.validWindows.compactMap(\.validUtilization).max()
+    }
+}
+
+/// Pure menu-bar content for a display mode. Kept free of SwiftUI so the
+/// selection and fallback rules are unit-testable; MenuBarStatusView renders it.
+enum MenuBarContent {
+    static func text(
+        mode: MenuBarDisplayMode,
+        selectedProvider: Provider,
+        snapshots: [Provider: UsageSnapshot],
+        enabled: Set<Provider>,
+        criticalThreshold: Double
+    ) -> String {
+        switch mode {
+        case .iconOnly:
+            ""
+        case .combinedUsage:
+            UsageAggregation.maximum(in: snapshots, enabled: enabled).map { "\(Int($0.rounded()))%" } ?? ""
+        case .providerSpecific:
+            Provider.allCases.compactMap { provider in
+                UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled)
+                    .map { "\(provider.menuBarAbbreviation) \(Int($0.rounded()))%" }
+            }.joined(separator: " · ")
+        case .criticalProviderOnly:
+            criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold)
+                .map(\.menuBarAbbreviation).joined(separator: " · ")
+        case .singleProvider:
+            if !enabled.contains(selectedProvider) {
+                // The chosen provider is hidden: fall back like combined usage.
+                text(mode: .combinedUsage, selectedProvider: selectedProvider, snapshots: snapshots, enabled: enabled, criticalThreshold: criticalThreshold)
+            } else if let usage = UsageAggregation.maximum(for: selectedProvider, in: snapshots, enabled: enabled) {
+                "\(selectedProvider.menuBarAbbreviation) \(Int(usage.rounded()))%"
+            } else {
+                selectedProvider.menuBarAbbreviation
+            }
+        }
+    }
+
+    static func symbolName(
+        mode: MenuBarDisplayMode,
+        selectedProvider: Provider,
+        snapshots: [Provider: UsageSnapshot],
+        enabled: Set<Provider>,
+        criticalThreshold: Double
+    ) -> String {
+        switch mode {
+        case .singleProvider:
+            selectedProvider.systemImage
+        case .criticalProviderOnly
+            where !criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold).isEmpty:
+            "exclamationmark.triangle.fill"
+        default:
+            "chart.bar.fill"
+        }
+    }
+
+    private static func criticalProviders(
+        in snapshots: [Provider: UsageSnapshot],
+        enabled: Set<Provider>,
+        threshold: Double
+    ) -> [Provider] {
+        Provider.allCases.compactMap { provider in
+            guard let usage = UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled),
+                  usage >= threshold else { return nil }
+            return provider
+        }
     }
 }
 

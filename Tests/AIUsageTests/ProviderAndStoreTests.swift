@@ -95,6 +95,28 @@ private struct AutoStartFixtureProvider: UsageProvider {
     }
 }
 
+private actor QuotaNotificationRecorder: QuotaNotificationDelivering {
+    private(set) var delivered: [QuotaNotification] = []
+    func requestAuthorization() async -> Bool { true }
+    func deliver(_ notification: QuotaNotification) async { delivered.append(notification) }
+    func kinds() -> [QuotaNotification.Kind] { delivered.map(\.kind) }
+}
+
+private actor QuotaFixtureProvider: UsageProvider {
+    nonisolated let provider: Provider = .claude
+    private var utilization: Double
+    init(utilization: Double) { self.utilization = utilization }
+    func setUtilization(_ value: Double) { utilization = value }
+    func fetch() async throws -> UsageSnapshot {
+        UsageSnapshot(
+            provider: .claude,
+            windows: [UsageWindow(label: "5-hour limit", utilization: utilization, resetsAt: nil)],
+            account: nil,
+            lastSuccess: .now
+        )
+    }
+}
+
 private struct FixtureProvider: UsageProvider {
     let provider: Provider
     let failure: ProviderFailure?
@@ -171,6 +193,139 @@ final class ProviderAndStoreTests: XCTestCase {
         let starts = await recorder.providers()
         XCTAssertEqual(starts, [.claude])
         XCTAssertTrue(UsageStore(providers: [], defaults: defaults, startImmediately: false).autoStartUsageWindow)
+    }
+
+    func testQuotaPolicyFiresWarningOnceThenRearmsAfterRecovery() {
+        let (first, ep1) = QuotaNotificationPolicy.evaluate(
+            utilization: 75, warningThreshold: 70, criticalThreshold: 90, episode: .init())
+        XCTAssertEqual(first, .warning)
+        XCTAssertTrue(ep1.warned)
+        XCTAssertFalse(ep1.critical)
+        let (second, _) = QuotaNotificationPolicy.evaluate(
+            utilization: 75, warningThreshold: 70, criticalThreshold: 90, episode: ep1)
+        XCTAssertNil(second)
+        // Jitter inside hysteresis: neither refire nor restore.
+        let (third, ep3) = QuotaNotificationPolicy.evaluate(
+            utilization: 68, warningThreshold: 70, criticalThreshold: 90, episode: ep1)
+        XCTAssertNil(third)
+        XCTAssertTrue(ep3.warned)
+        // Recovery below hysteresis fires restored and clears the episode.
+        let (fourth, ep4) = QuotaNotificationPolicy.evaluate(
+            utilization: 60, warningThreshold: 70, criticalThreshold: 90, episode: ep3)
+        XCTAssertEqual(fourth, .restored)
+        XCTAssertFalse(ep4.warned)
+        XCTAssertFalse(ep4.critical)
+    }
+
+    func testQuotaPolicyCriticalSuppressesLaterWarning() {
+        let (first, ep1) = QuotaNotificationPolicy.evaluate(
+            utilization: 95, warningThreshold: 70, criticalThreshold: 90, episode: .init())
+        XCTAssertEqual(first, .critical)
+        XCTAssertTrue(ep1.warned)
+        XCTAssertTrue(ep1.critical)
+        let (second, ep2) = QuotaNotificationPolicy.evaluate(
+            utilization: 95, warningThreshold: 70, criticalThreshold: 90, episode: ep1)
+        XCTAssertNil(second)
+        // Dip into the warning band: no stale warning after a critical.
+        let (third, ep3) = QuotaNotificationPolicy.evaluate(
+            utilization: 80, warningThreshold: 70, criticalThreshold: 90, episode: ep2)
+        XCTAssertNil(third)
+        let (fourth, ep4) = QuotaNotificationPolicy.evaluate(
+            utilization: 60, warningThreshold: 70, criticalThreshold: 90, episode: ep3)
+        XCTAssertEqual(fourth, .restored)
+        XCTAssertFalse(ep4.warned)
+        XCTAssertFalse(ep4.critical)
+    }
+
+    @MainActor
+    func testQuotaNotificationsFireOncePerWindowUntilRecovery() async throws {
+        let defaults = isolatedDefaults()
+        let recorder = QuotaNotificationRecorder()
+        let provider = QuotaFixtureProvider(utilization: 75)
+        let store = UsageStore(
+            providers: [provider],
+            defaults: defaults,
+            startImmediately: false,
+            quotaDeliverer: recorder
+        )
+        XCTAssertFalse(store.quotaNotificationsEnabled)
+        store.quotaNotificationsEnabled = true
+        await store.refresh()
+        try await waitForDelivered(1, recorder: recorder)
+        var kinds = await recorder.delivered.map(\.kind)
+        XCTAssertEqual(kinds, [.warning])
+        // Same level again: no duplicate, and a fresh store reuses persisted state.
+        await store.refresh()
+        let second = UsageStore(providers: [provider], defaults: defaults, startImmediately: false, quotaDeliverer: recorder)
+        XCTAssertTrue(second.quotaNotificationsEnabled)
+        await second.refresh()
+        try await waitForDelivered(1, recorder: recorder)
+        kinds = await recorder.delivered.map(\.kind)
+        XCTAssertEqual(kinds, [.warning])
+        // Escalation fires critical once.
+        await provider.setUtilization(95)
+        await store.refresh()
+        try await waitForDelivered(2, recorder: recorder)
+        kinds = await recorder.delivered.map(\.kind)
+        XCTAssertEqual(kinds, [.warning, .critical])
+        // Recovery fires restored and re-arms: crossing again warns anew.
+        await provider.setUtilization(50)
+        await store.refresh()
+        try await waitForDelivered(3, recorder: recorder)
+        kinds = await recorder.delivered.map(\.kind)
+        XCTAssertEqual(kinds, [.warning, .critical, .restored])
+        await provider.setUtilization(75)
+        await store.refresh()
+        try await waitForDelivered(4, recorder: recorder)
+        kinds = await recorder.delivered.map(\.kind)
+        XCTAssertEqual(kinds, [.warning, .critical, .restored, .warning])
+    }
+
+    @MainActor
+    func testQuotaNotificationsStaySilentWhenDisabledOrStale() async throws {
+        let defaults = isolatedDefaults()
+        let recorder = QuotaNotificationRecorder()
+        let disabled = UsageStore(
+            providers: [QuotaFixtureProvider(utilization: 95)],
+            defaults: defaults,
+            startImmediately: false,
+            quotaDeliverer: recorder
+        )
+        await disabled.refresh()
+        await settleDelivered(recorder: recorder)
+        var kinds = await recorder.delivered.map(\.kind)
+        XCTAssertTrue(kinds.isEmpty)
+        // Failures keep stale snapshots quiet too.
+        let staleStore = UsageStore(
+            providers: [FixtureProvider(provider: .claude, failure: .network("offline"), delay: .zero, counter: FetchCounter())],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            quotaDeliverer: recorder
+        )
+        staleStore.quotaNotificationsEnabled = true
+        await staleStore.refresh()
+        await settleDelivered(recorder: recorder)
+        kinds = await recorder.delivered.map(\.kind)
+        XCTAssertTrue(kinds.isEmpty)
+    }
+
+    @MainActor
+    private func settleDelivered(recorder: QuotaNotificationRecorder) async {
+        for _ in 0..<100 {
+            await Task.yield()
+        }
+        _ = await recorder.delivered.count
+    }
+
+    @MainActor
+    private func waitForDelivered(_ count: Int, recorder: QuotaNotificationRecorder) async throws {
+        for _ in 0..<200 {
+            if await recorder.delivered.count >= count { return }
+            await Task.yield()
+        }
+        if count > 0 {
+            throw XCTSkip("Timed out waiting for \(count) notifications")
+        }
     }
 
     func testAntigravityParsingMapsGroupsAndResetDates() throws {
@@ -541,6 +696,76 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
+    }
+
+    func testMenuBarSingleProviderShowsAbbreviationAndFallsBack() {
+        func snapshot(_ provider: Provider, _ utilization: Double) -> UsageSnapshot {
+            UsageSnapshot(
+                provider: provider,
+                windows: [UsageWindow(label: "Session", utilization: utilization, resetsAt: nil)],
+                account: nil,
+                lastSuccess: .now
+            )
+        }
+        let snapshots: [Provider: UsageSnapshot] = [.claude: snapshot(.claude, 42), .codex: snapshot(.codex, 80)]
+        let both: Set<Provider> = [.claude, .codex]
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .singleProvider, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            "A 42%"
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .singleProvider, selectedProvider: .cursor, snapshots: snapshots, enabled: both.union([.cursor]), criticalThreshold: 90),
+            "Cursor"
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .singleProvider, selectedProvider: .claude, snapshots: snapshots, enabled: [.codex], criticalThreshold: 90),
+            "80%"
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .combinedUsage, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            "80%"
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .iconOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            ""
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .providerSpecific, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            "C 80% · A 42%"
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            ""
+        )
+        XCTAssertEqual(
+            MenuBarContent.text(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 70),
+            "C"
+        )
+        XCTAssertEqual(
+            MenuBarContent.symbolName(mode: .singleProvider, selectedProvider: .codex, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            "terminal.fill"
+        )
+        XCTAssertEqual(
+            MenuBarContent.symbolName(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 70),
+            "exclamationmark.triangle.fill"
+        )
+        XCTAssertEqual(
+            MenuBarContent.symbolName(mode: .combinedUsage, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
+            "chart.bar.fill"
+        )
+    }
+
+    @MainActor
+    func testMenuBarProviderPersistsAcrossStoreInstances() {
+        let defaults = isolatedDefaults()
+        let first = UsageStore(providers: [], defaults: defaults, startImmediately: false)
+        XCTAssertEqual(first.menuBarProvider, .claude)
+        first.menuBarProvider = .codex
+        let second = UsageStore(providers: [], defaults: defaults, startImmediately: false)
+        XCTAssertEqual(second.menuBarMode, .combinedUsage)
+        XCTAssertEqual(second.menuBarProvider, .codex)
+        defaults.set("Nope", forKey: "menuBarProvider")
+        XCTAssertEqual(UsageStore(providers: [], defaults: defaults, startImmediately: false).menuBarProvider, .claude)
     }
 
     @MainActor
