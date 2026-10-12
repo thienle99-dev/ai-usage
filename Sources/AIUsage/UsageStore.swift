@@ -5,8 +5,14 @@ import ServiceManagement
 @MainActor @Observable final class UsageStore {
     var snapshots: [Provider: UsageSnapshot] = [:]
     var refreshing: Set<Provider> = []
-    var visibleProviders: Set<Provider> = Set(Provider.allCases) {
+    var visibleProviders: Set<Provider> = Set(Provider.supported) {
         didSet { defaults.set(visibleProviders.map(\.rawValue), forKey: "visibleProviders") }
+    }
+    var selectedProvider: Provider? {
+        didSet {
+            if let selectedProvider { defaults.set(selectedProvider.rawValue, forKey: "selectedProvider") }
+            else { defaults.removeObject(forKey: "selectedProvider") }
+        }
     }
     var warningThreshold = 70.0 { didSet { defaults.set(warningThreshold, forKey: "warningThreshold") } }
     var criticalThreshold = 90.0 { didSet { defaults.set(criticalThreshold, forKey: "criticalThreshold") } }
@@ -62,6 +68,9 @@ import ServiceManagement
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
+        }
+        if let raw = defaults.string(forKey: "selectedProvider") {
+            selectedProvider = Provider(rawValue: raw)
         }
         if defaults.object(forKey: "warningThreshold") != nil { warningThreshold = defaults.double(forKey: "warningThreshold") }
         if defaults.object(forKey: "criticalThreshold") != nil { criticalThreshold = defaults.double(forKey: "criticalThreshold") }

@@ -15,7 +15,13 @@ enum UsageTheme {
     static let critical = adaptive(dark: "EB6A6A", light: "CD4747")
     static let track = adaptive(dark: "34363D", light: "E2E4E9")
 
-    static func provider(_ provider: Provider) -> Color { provider == .codex ? codex : claude }
+    static func provider(_ provider: Provider) -> Color {
+        switch provider {
+        case .codex: codex
+        case .claude: claude
+        default: secondaryText
+        }
+    }
 
     private static func adaptive(dark: String, light: String) -> Color {
         Color(nsColor: NSColor(name: nil) { appearance in

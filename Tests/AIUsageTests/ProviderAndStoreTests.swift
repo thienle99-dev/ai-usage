@@ -191,6 +191,7 @@ final class ProviderAndStoreTests: XCTestCase {
         let first = UsageStore(providers: [], defaults: defaults, startImmediately: false)
         first.appearance = "dark"
         first.menuBarMode = .providerSpecific
+        first.selectedProvider = .copilot
         first.warningThreshold = 75
         first.criticalThreshold = 95
         first.visibleProviders = [.claude]
@@ -198,9 +199,19 @@ final class ProviderAndStoreTests: XCTestCase {
         let second = UsageStore(providers: [], defaults: defaults, startImmediately: false)
         XCTAssertEqual(second.appearance, "dark")
         XCTAssertEqual(second.menuBarMode, .providerSpecific)
+        XCTAssertEqual(second.selectedProvider, .copilot)
         XCTAssertEqual(second.warningThreshold, 75)
         XCTAssertEqual(second.criticalThreshold, 95)
         XCTAssertEqual(second.visibleProviders, [.claude])
+    }
+
+    func testProviderNavigationRegistryLabelsAndSupportedSources() {
+        XCTAssertEqual(Provider.allCases.map(\.shortName), [
+            "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Windsurf", "Cline", "Roo", "OpenCode"
+        ])
+        XCTAssertEqual(Provider.supported, [.codex, .claude])
+        XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
+        XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }
 
     private func isolatedDefaults() -> UserDefaults {

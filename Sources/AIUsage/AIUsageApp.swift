@@ -47,9 +47,9 @@ private struct MenuBarStatusView: View {
         case .combinedUsage:
             highestUsage.map { "\(Int($0.rounded()))%" } ?? ""
         case .providerSpecific:
-            providerUsage.map { "\($0.0.shortName) \(Int($0.1.rounded()))%" }.joined(separator: " · ")
+            providerUsage.map { "\($0.0.menuBarAbbreviation) \(Int($0.1.rounded()))%" }.joined(separator: " · ")
         case .criticalProviderOnly:
-            criticalProviders.map(\.shortName).joined(separator: " · ")
+            criticalProviders.map(\.menuBarAbbreviation).joined(separator: " · ")
         }
     }
 
@@ -66,16 +66,114 @@ private struct MenuBarStatusView: View {
     }
 }
 
+private struct ProviderIconNavigationView: View {
+    @Binding var selection: Provider?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private var selectedID: String { selection?.rawValue ?? "all" }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal) {
+                HStack(spacing: 3) {
+                    ProviderNavigationItem(
+                        title: "All",
+                        accessibilityName: "All providers",
+                        systemImage: "square.grid.2x2.fill",
+                        accent: UsageTheme.primaryText,
+                        isSelected: selection == nil
+                    ) { selection = nil }
+                    .id("all")
+
+                    ForEach(Provider.allCases) { provider in
+                        ProviderNavigationItem(
+                            title: provider.shortName,
+                            accessibilityName: provider.displayName,
+                            systemImage: provider.systemImage,
+                            accent: UsageTheme.provider(provider),
+                            isSelected: selection == provider
+                        ) { selection = provider }
+                        .id(provider.rawValue)
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+            }
+            .scrollIndicators(.hidden)
+            .frame(height: 64)
+            .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(UsageTheme.separator.opacity(0.75), lineWidth: 0.7))
+            .onAppear { proxy.scrollTo(selectedID, anchor: .center) }
+            .onChange(of: selection) { _, _ in
+                if reduceMotion {
+                    proxy.scrollTo(selectedID, anchor: .center)
+                } else {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        proxy.scrollTo(selectedID, anchor: .center)
+                    }
+                }
+            }
+        }
+        .accessibilityLabel("Provider navigation")
+    }
+}
+
+private struct ProviderNavigationItem: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    let title: String
+    let accessibilityName: String
+    let systemImage: String
+    let accent: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var itemBackground: Color {
+        if isSelected { return UsageTheme.elevated }
+        if isHovered { return UsageTheme.elevated.opacity(0.62) }
+        return .clear
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 19, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? accent : UsageTheme.secondaryText)
+                    .frame(width: 20, height: 20)
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(isSelected ? UsageTheme.primaryText : UsageTheme.secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                    .frame(maxWidth: .infinity)
+            }
+            .frame(width: 54, height: 52)
+            .background(itemBackground, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isSelected)
+        .help(accessibilityName)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityHint("Filters the dashboard to \(accessibilityName)")
+        .accessibilityValue(isSelected ? "Selected" : "")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 struct UsagePopover: View {
     @Environment(UsageStore.self) private var store
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var filter: ProviderFilter = .all
     @State private var quitHovered = false
 
     private var shownProviders: [Provider] {
-        Provider.allCases.filter { provider in
-            store.visibleProviders.contains(provider) && (filter.provider == nil || filter.provider == provider)
+        Provider.supported.filter { provider in
+            store.visibleProviders.contains(provider) && (store.selectedProvider == nil || store.selectedProvider == provider)
         }
     }
     private var lastSuccess: Date? {
@@ -85,15 +183,15 @@ struct UsagePopover: View {
     var body: some View {
         VStack(spacing: 12) {
             header
-            Picker("Provider", selection: $filter) {
-                ForEach(ProviderFilter.allCases) { item in Text(item.title).tag(item) }
-            }
-            .pickerStyle(.segmented)
-            .accessibilityLabel("Filter providers")
+            ProviderIconNavigationView(
+                selection: Binding(
+                    get: { store.selectedProvider },
+                    set: { store.selectedProvider = $0 }
+                )
+            )
 
             if shownProviders.isEmpty {
-                ContentUnavailableView("No providers shown", systemImage: "eye.slash", description: Text("Enable Codex or Claude in Settings."))
-                    .frame(maxWidth: .infinity, minHeight: 150)
+                emptyProviderState
             } else {
                 ScrollView {
                     VStack(spacing: 12) {
@@ -105,16 +203,62 @@ struct UsagePopover: View {
                     }
                     .padding(.vertical, 1)
                 }
-                .frame(minHeight: 440, maxHeight: 720)
+                .frame(maxHeight: .infinity)
             }
 
             footer
         }
         .padding(16)
-        .frame(width: 380)
-        .frame(minHeight: 620)
+        .frame(width: 380, height: 620, alignment: .top)
         .background(UsageTheme.background)
         .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
+    }
+
+    private var emptyProviderState: some View {
+        let selected = store.selectedProvider
+        let unsupported = selected.map { !$0.isUsageSupported } ?? false
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: unsupported ? (selected?.systemImage ?? "questionmark.circle") : "eye.slash")
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(unsupported ? UsageTheme.provider(selected ?? .codex) : UsageTheme.mutedText)
+                    .frame(width: 34, height: 34)
+                    .background(UsageTheme.elevated, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(unsupported ? "\(selected?.displayName ?? "Provider") not integrated" : "No providers shown")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(UsageTheme.primaryText)
+                    Text(unsupported ? "Usage tracking is unavailable for this provider." : "Enable Codex or Claude in Settings.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                }
+                Spacer(minLength: 4)
+                Text(unsupported ? "UNAVAILABLE" : "HIDDEN")
+                    .font(.system(size: 9, weight: .semibold))
+                    .tracking(0.4)
+                    .foregroundStyle(UsageTheme.mutedText)
+            }
+            Rectangle().fill(UsageTheme.separator).frame(height: 1)
+            if unsupported {
+                Text("This provider is listed in navigation, but it does not have a usage data source connected yet.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button("Show all providers") { store.selectedProvider = nil }
+                    .buttonStyle(.borderless)
+            } else {
+                Spacer(minLength: 0)
+                Button("Open Settings…") {
+                    NSApp.activate(ignoringOtherApps: true)
+                    openWindow(id: "settings")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(16)
+        .background(UsageTheme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var header: some View {
@@ -435,7 +579,7 @@ struct SettingsWindowView: View {
                 }
             }
             Section("Visible providers") {
-                ForEach(Provider.allCases) { provider in
+                ForEach(Provider.supported) { provider in
                     Toggle(provider.displayName, isOn: Binding(
                         get: { store.wrappedValue.visibleProviders.contains(provider) },
                         set: { enabled in
@@ -473,7 +617,7 @@ struct SettingsWindowView: View {
 
     private var providerSettings: some View {
         Form {
-            ForEach(Provider.allCases) { provider in
+            ForEach(Provider.supported) { provider in
                 Section(provider.displayName) {
                     LabeledContent("Status", value: store.status(for: provider).title)
                     if let snapshot = store.snapshots[provider] {

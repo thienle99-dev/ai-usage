@@ -1,13 +1,65 @@
 import Foundation
 
 enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
-    case claude = "Claude"
     case codex = "Codex"
+    case claude = "Claude"
+    case cursor = "Cursor"
+    case copilot = "Copilot"
+    case gemini = "Gemini"
+    case windsurf = "Windsurf"
+    case cline = "Cline"
+    case roo = "Roo"
+    case openCode = "OpenCode"
 
     var id: String { rawValue }
-    var displayName: String { self == .claude ? "Claude Code" : "Codex" }
-    var shortName: String { self == .claude ? "A" : "C" }
-    var systemImage: String { self == .claude ? "sparkles" : "terminal.fill" }
+    var displayName: String {
+        switch self {
+        case .codex: "OpenAI Codex"
+        case .claude: "Claude Code"
+        case .cursor: "Cursor"
+        case .copilot: "GitHub Copilot"
+        case .gemini: "Gemini CLI"
+        case .windsurf: "Windsurf"
+        case .cline: "Cline"
+        case .roo: "Roo Code"
+        case .openCode: "OpenCode"
+        }
+    }
+    var shortName: String {
+        switch self {
+        case .codex: "Codex"
+        case .claude: "Claude"
+        case .cursor: "Cursor"
+        case .copilot: "Copilot"
+        case .gemini: "Gemini"
+        case .windsurf: "Windsurf"
+        case .cline: "Cline"
+        case .roo: "Roo"
+        case .openCode: "OpenCode"
+        }
+    }
+    var menuBarAbbreviation: String {
+        switch self {
+        case .codex: "C"
+        case .claude: "A"
+        default: shortName
+        }
+    }
+    var systemImage: String {
+        switch self {
+        case .codex: "terminal.fill"
+        case .claude: "sparkles"
+        case .cursor: "cursorarrow"
+        case .copilot: "chevron.left.forwardslash.chevron.right"
+        case .gemini: "diamond.fill"
+        case .windsurf: "wind"
+        case .cline: "wrench.and.screwdriver.fill"
+        case .roo: "point.3.connected.trianglepath.dotted"
+        case .openCode: "chevron.left.forwardslash.chevron.right"
+        }
+    }
+    var isUsageSupported: Bool { self == .codex || self == .claude }
+    static let supported: [Provider] = [.codex, .claude]
 }
 
 enum ProviderStatus: String, Codable, Sendable {
@@ -86,25 +138,6 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
         switch legacyValue {
         case "App name": self = .iconOnly
         default: self = .combinedUsage
-        }
-    }
-}
-
-enum ProviderFilter: String, CaseIterable, Identifiable {
-    case all, codex, claude
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .all: "All"
-        case .codex: "Codex"
-        case .claude: "Claude"
-        }
-    }
-    var provider: Provider? {
-        switch self {
-        case .all: nil
-        case .codex: .codex
-        case .claude: .claude
         }
     }
 }
