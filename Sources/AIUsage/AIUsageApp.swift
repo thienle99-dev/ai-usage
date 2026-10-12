@@ -71,6 +71,7 @@ struct UsagePopover: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var filter: ProviderFilter = .all
+    @State private var quitHovered = false
 
     private var shownProviders: [Provider] {
         Provider.allCases.filter { provider in
@@ -157,24 +158,42 @@ struct UsagePopover: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        VStack(spacing: 10) {
             Rectangle().fill(UsageTheme.separator).frame(height: 1)
-        }
-        .overlay {
             HStack {
-                Text(store.refreshPolicy == .manual ? "Manual refresh" : "Auto refresh: \(store.refreshPolicy.title)")
-                    .foregroundStyle(UsageTheme.secondaryText)
+                HStack(spacing: 7) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(UsageTheme.mutedText)
+                    if store.refreshPolicy == .manual {
+                        Text("Manual refresh")
+                            .foregroundStyle(UsageTheme.secondaryText)
+                    } else {
+                        Text("Auto refresh")
+                            .foregroundStyle(UsageTheme.secondaryText)
+                        Text(store.refreshPolicy.title)
+                            .foregroundStyle(UsageTheme.primaryText)
+                    }
+                }
                 Spacer()
-                Button("Quit") { NSApp.terminate(nil) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(UsageTheme.secondaryText)
+                Button { NSApp.terminate(nil) } label: {
+                    Label("Quit", systemImage: "power")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(quitHovered ? UsageTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 8))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .onHover { quitHovered = $0 }
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.14), value: quitHovered)
                     .accessibilityLabel("Quit AI Usage Monitor")
             }
             .font(.system(size: 11))
-            .padding(.top, 10)
+            .frame(height: 28)
         }
-        .padding(.top, 3)
-        .frame(height: 18)
+        .padding(.top, 2)
     }
 }
 
