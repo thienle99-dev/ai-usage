@@ -60,6 +60,7 @@ import ServiceManagement
     }
     var codexSwitchInFlight = false
     var codexSwitchError: String?
+    @ObservationIgnored private var codexAccountSnapshots: [String: UsageSnapshot] = [:]
 
     @ObservationIgnored private let providers: [any UsageProvider]
     @ObservationIgnored private let defaults: UserDefaults
@@ -70,6 +71,7 @@ import ServiceManagement
     @ObservationIgnored private var publicServiceStatusRefreshInFlight = false
     @ObservationIgnored private var publicServiceStatusMonitoringEnabled = false
     @ObservationIgnored private let codexAuthFileURL: URL
+    @ObservationIgnored private let managedCodexAccountsRootURL: URL
     @ObservationIgnored private let fileModificationDate: @Sendable (String) -> Date?
     @ObservationIgnored private let autoStartRunner: any UsageWindowStartCommandRunning
     @ObservationIgnored private let quotaDeliverer: any QuotaNotificationDelivering
@@ -104,6 +106,7 @@ import ServiceManagement
         cacheURL: URL? = nil,
         startImmediately: Bool = true,
         codexAuthFileURL: URL? = nil,
+        managedCodexAccountsRootURL: URL? = nil,
         fileModificationDate: (@Sendable (String) -> Date?)? = nil,
         autoStartRunner: any UsageWindowStartCommandRunning = LocalUsageWindowStartCommandRunner(),
         quotaDeliverer: any QuotaNotificationDelivering = UserNotificationQuotaDeliverer()
@@ -113,6 +116,9 @@ import ServiceManagement
         self.cacheURL = cacheURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
         self.codexAuthFileURL = codexAuthFileURL ?? Self.defaultCodexAuthFileURL()
+        self.managedCodexAccountsRootURL = managedCodexAccountsRootURL
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".ai-usage/accounts/codex", isDirectory: true)
         self.fileModificationDate = fileModificationDate ?? Self.defaultModificationDate
         self.autoStartRunner = autoStartRunner
         self.quotaDeliverer = quotaDeliverer
@@ -147,11 +153,32 @@ import ServiceManagement
             codexHomes = homes
         }
         activeCodexHomePath = defaults.string(forKey: "activeCodexHomePath")
+        if let data = defaults.data(forKey: "codexAccountSnapshots"),
+           let cached = try? JSONDecoder().decode([String: UsageSnapshot].self, from: data) {
+            codexAccountSnapshots = cached.filter { $0.value.provider == .codex }
+        }
         if let data = try? Data(contentsOf: self.cacheURL), let cached = try? JSONDecoder().decode([UsageSnapshot].self, from: data) {
             snapshots = Dictionary(uniqueKeysWithValues: cached.map { ($0.provider, $0) })
+            if let activeCodexHomePath, let codexSnapshot = snapshots[.codex] {
+                let expectedID = codexHomes.first(where: { $0.path == activeCodexHomePath })?.lastSeenAccountID
+                if expectedID == nil || expectedID == codexSnapshot.accountID {
+                    codexAccountSnapshots[activeCodexHomePath] = codexSnapshot
+                } else {
+                    // Old provider-only cache may belong to a different account.
+                    snapshots[.codex] = nil
+                }
+            }
             lastRefreshAttempt = cached.map(\.lastSuccess).filter { $0 != .distantPast }.max()
-            publishWidgetSnapshot()
         }
+        if let activeCodexHomePath,
+           let savedSnapshot = codexAccountSnapshots[activeCodexHomePath],
+           savedSnapshot.provider == .codex {
+            let expectedID = codexHomes.first(where: { $0.path == activeCodexHomePath })?.lastSeenAccountID
+            if (expectedID == nil || savedSnapshot.accountID == expectedID), snapshots[.codex] == nil {
+                snapshots[.codex] = savedSnapshot
+            }
+        }
+        publishWidgetSnapshot()
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         schedule()
         startCodexAuthWatcher()
@@ -216,6 +243,7 @@ import ServiceManagement
                     maybeNotifyQuota(for: snapshot)
                     if provider == .codex {
                         noteSuccessfulCodexFetch(snapshot)
+                        cacheCodexSnapshot(snapshot)
                     }
                 case .failure(let failure):
                     if var snapshot = snapshots[provider] {
@@ -231,6 +259,9 @@ import ServiceManagement
                             error: failure.localizedDescription,
                             status: failure.status
                         )
+                    }
+                    if provider == .codex, let snapshot = snapshots[.codex] {
+                        cacheCodexSnapshot(snapshot)
                     }
                 }
             }
@@ -397,6 +428,87 @@ import ServiceManagement
 
     /// Live Codex home directory (`~/.codex` unless `$CODEX_HOME` overrides).
     var codexLiveHomeURL: URL { codexAuthFileURL.deletingLastPathComponent() }
+    var codexDefaultHomeSlotURL: URL {
+        managedCodexAccountsRootURL.appendingPathComponent("default-home", isDirectory: true)
+    }
+    var codexAccountManagementStarted: Bool {
+        codexHomes.contains { $0.path == codexDefaultHomeSlotURL.standardizedFileURL.path }
+    }
+    func isCodexDefaultHomeSlot(_ home: CodexHome) -> Bool {
+        home.path == codexDefaultHomeSlotURL.standardizedFileURL.path
+    }
+
+    /// Moves the existing live home into managed storage and reserves a slot
+    /// for the live home so a new account can be signed in with `codex login`.
+    func startManagingCodexAccounts() throws {
+        guard !codexSwitchInFlight, !refreshing.contains(.codex) else {
+            throw CodexHomeError.busy
+        }
+        guard !codexAccountManagementStarted else {
+            throw CodexHomeError.managementAlreadyStarted
+        }
+
+        let fileManager = FileManager.default
+        let liveURL = codexLiveHomeURL.standardizedFileURL
+        let rootURL = managedCodexAccountsRootURL.standardizedFileURL
+        let defaultSlotURL = codexDefaultHomeSlotURL.standardizedFileURL
+        let livePathPrefix = liveURL.path.hasSuffix("/") ? liveURL.path : liveURL.path + "/"
+        guard rootURL.path != liveURL.path, !rootURL.path.hasPrefix(livePathPrefix) else {
+            throw CodexHomeError.managedSlotOccupied(rootURL.path)
+        }
+        guard Self.isDirectory(at: liveURL) else { throw CodexHomeError.liveHomeMissing }
+        guard Self.hasCodexAuthFile(at: liveURL) else { throw CodexHomeError.liveHomeMissingAuth }
+        guard !Self.pathExists(defaultSlotURL.path) else {
+            throw CodexHomeError.managedSlotOccupied(defaultSlotURL.path)
+        }
+
+        try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        guard Self.volumeIdentifier(for: rootURL) != nil,
+              Self.volumeIdentifier(for: rootURL) == Self.volumeIdentifier(for: liveURL) else {
+            throw CodexHomeError.crossVolume
+        }
+
+        let accountURL = rootURL.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+        guard !Self.pathExists(accountURL.path) else {
+            throw CodexHomeError.managedSlotOccupied(accountURL.path)
+        }
+        let currentSnapshot = snapshots[.codex]
+        let managedHome = CodexHome(
+            path: accountURL.path,
+            lastSeenAccountID: currentSnapshot?.accountID,
+            lastSeenEmail: currentSnapshot?.accountID?.contains("@") == true ? currentSnapshot?.accountID : nil,
+            lastSeenAccount: currentSnapshot?.account,
+            lastSeenAt: currentSnapshot?.error == nil ? currentSnapshot?.lastSuccess : nil
+        )
+
+        try fileManager.moveItem(at: liveURL, to: accountURL)
+        do {
+            try fileManager.createDirectory(at: liveURL, withIntermediateDirectories: false)
+        } catch {
+            do {
+                try fileManager.moveItem(at: accountURL, to: liveURL)
+            } catch {
+                throw CodexHomeError.moveFailed(
+                    "The home is safely stored at \(accountURL.path), but could not be restored to \(liveURL.path): \(error.localizedDescription)"
+                )
+            }
+            throw CodexHomeError.moveFailed("Could not prepare the default Codex home: \(error.localizedDescription)")
+        }
+
+        if let previousActive = activeCodexHomePath, !Self.pathExists(previousActive) {
+            codexHomes.removeAll { $0.path == previousActive }
+            codexAccountSnapshots[previousActive] = nil
+        }
+        codexHomes.append(managedHome)
+        codexHomes.append(CodexHome(path: defaultSlotURL.path))
+        activeCodexHomePath = defaultSlotURL.path
+        if let currentSnapshot { codexAccountSnapshots[accountURL.path] = currentSnapshot }
+        codexAccountSnapshots[defaultSlotURL.path] = nil
+        snapshots[.codex] = nil
+        codexSwitchError = nil
+        saveCodexAccountSnapshots()
+        save()
+    }
 
     /// Whether `home`'s folder is currently live. Prefers the tracked active
     /// slot; falls back to identity matching so manual moves behind our back
@@ -405,6 +517,17 @@ import ServiceManagement
         if let active = activeCodexHomePath { return active == home.path }
         guard let liveID = snapshots[.codex]?.accountID, !liveID.isEmpty else { return false }
         return home.lastSeenAccountID == liveID
+    }
+
+    func codexHomeDisplayName(_ home: CodexHome) -> String {
+        if home.path == codexDefaultHomeSlotURL.standardizedFileURL.path,
+           home.lastSeenAccount == nil, home.lastSeenEmail == nil {
+            return String(localized: "Default Codex home", locale: locale)
+        }
+        let matchingHomes = codexHomes.filter { $0.displayName == home.displayName }
+        guard matchingHomes.count > 1 else { return home.displayName }
+        let slotName = URL(fileURLWithPath: home.path, isDirectory: true).lastPathComponent
+        return "\(home.displayName) · \(slotName)"
     }
 
     /// True when the live account matches no registered home.
@@ -448,13 +571,18 @@ import ServiceManagement
         codexHomes.append(CodexHome(path: slotURL.path))
     }
 
-    /// Whether the slot has no folder on disk (checked out live, or never placed).
-    func isCodexSlotEmpty(_ home: CodexHome) -> Bool { !Self.pathExists(home.path) }
+    /// Whether the slot has no signed-in Codex home (including a newly
+    /// recreated but not yet authenticated default directory).
+    func isCodexSlotEmpty(_ home: CodexHome) -> Bool {
+        !Self.hasCodexAuthFile(at: URL(fileURLWithPath: home.path, isDirectory: true))
+    }
 
     /// Removes a registry entry. Never touches the disk; the live folder stays
     /// as-is even if it was the active slot (it then shows as unregistered).
     func removeCodexHome(_ home: CodexHome) {
         codexHomes.removeAll(where: { $0.path == home.path })
+        codexAccountSnapshots[home.path] = nil
+        saveCodexAccountSnapshots()
         if activeCodexHomePath == home.path { activeCodexHomePath = nil }
     }
 
@@ -467,6 +595,10 @@ import ServiceManagement
             codexSwitchError = CodexHomeError.busy.localizedDescription
             return
         }
+        guard !isCodexSlotEmpty(target) || isCodexDefaultHomeSlot(target) else {
+            codexSwitchError = CodexHomeError.emptySlot.localizedDescription
+            return
+        }
         codexSwitchInFlight = true
         defer { codexSwitchInFlight = false }
         codexSwitchError = nil
@@ -474,9 +606,15 @@ import ServiceManagement
             let source = try resolveCodexSourceSlot()
             guard source.path != target.path else { return }
             guard let liveTarget = codexHomes.first(where: { $0.path == target.path }) else { return }
+            let targetSnapshotBeforeSwitch = codexAccountSnapshots[target.path]
+            if let currentSnapshot = snapshots[.codex] {
+                codexAccountSnapshots[source.path] = currentSnapshot
+                saveCodexAccountSnapshots()
+            }
             try performCodexHomeSwap(from: source, to: liveTarget)
             activeCodexHomePath = target.path
             lastSeenCodexAuthMtime = fileModificationDate(codexAuthFileURL.path)
+            restoreCodexSnapshot(for: liveTarget)
             let switchedAt = Date.now
             await refresh(provider: .codex)
             if let expected = liveTarget.lastSeenAccountID, !expected.isEmpty,
@@ -488,6 +626,24 @@ import ServiceManagement
                 } catch {
                     activeCodexHomePath = nil
                 }
+                if let index = codexHomes.firstIndex(where: { $0.path == liveTarget.path }) {
+                    codexHomes[index].lastSeenAccountID = liveTarget.lastSeenAccountID
+                    codexHomes[index].lastSeenEmail = liveTarget.lastSeenEmail
+                    codexHomes[index].lastSeenAccount = liveTarget.lastSeenAccount
+                    codexHomes[index].lastSeenAt = liveTarget.lastSeenAt
+                }
+                if let targetSnapshotBeforeSwitch {
+                    codexAccountSnapshots[liveTarget.path] = targetSnapshotBeforeSwitch
+                } else {
+                    codexAccountSnapshots[liveTarget.path] = nil
+                }
+                if let sourceSnapshot = codexAccountSnapshots[source.path] {
+                    snapshots[.codex] = sourceSnapshot
+                } else {
+                    snapshots[.codex] = nil
+                }
+                saveCodexAccountSnapshots()
+                save()
                 throw CodexHomeError.identityMismatch(expected: expected, found: found)
             }
         } catch let error as CodexHomeError {
@@ -519,9 +675,26 @@ import ServiceManagement
         }
         if let index = codexHomes.firstIndex(where: { $0.path == activeCodexHomePath }) {
             codexHomes[index].lastSeenAccountID = accountID
-            codexHomes[index].lastSeenEmail = snapshot.account
+            codexHomes[index].lastSeenEmail = snapshot.accountID?.contains("@") == true ? snapshot.accountID : nil
+            codexHomes[index].lastSeenAccount = snapshot.account
             codexHomes[index].lastSeenAt = snapshot.lastSuccess
         }
+    }
+
+    private func cacheCodexSnapshot(_ snapshot: UsageSnapshot) {
+        guard let accountPath = activeCodexHomePath,
+              codexHomes.contains(where: { $0.path == accountPath }) else { return }
+        codexAccountSnapshots[accountPath] = snapshot
+        saveCodexAccountSnapshots()
+    }
+
+    private func restoreCodexSnapshot(for home: CodexHome) {
+        guard let cached = codexAccountSnapshots[home.path],
+              home.lastSeenAccountID == nil || cached.accountID == home.lastSeenAccountID else {
+            snapshots[.codex] = nil
+            return
+        }
+        snapshots[.codex] = cached
     }
 
     /// Which slot's folder currently sits at the live location. Refuses when
@@ -556,8 +729,15 @@ import ServiceManagement
         let targetURL = URL(fileURLWithPath: target.path, isDirectory: true)
         let tmpURL = liveURL.deletingLastPathComponent()
             .appendingPathComponent(".codex.swap-tmp", isDirectory: true)
-        guard Self.isDirectory(at: targetURL), Self.hasCodexAuthFile(at: targetURL) else {
-            throw CodexHomeError.missingAuthFile
+        if isCodexDefaultHomeSlot(target), !Self.hasCodexAuthFile(at: targetURL) {
+            if !Self.pathExists(targetURL.path) {
+                try FileManager.default.createDirectory(at: targetURL, withIntermediateDirectories: false)
+            }
+            guard Self.isDirectory(at: targetURL) else { throw CodexHomeError.missingAuthFile }
+        } else {
+            guard Self.isDirectory(at: targetURL), Self.hasCodexAuthFile(at: targetURL) else {
+                throw CodexHomeError.missingAuthFile
+            }
         }
         guard !fm.fileExists(atPath: tmpURL.path) else {
             throw CodexHomeError.leftoverSwapFolder(tmpURL.path)
@@ -614,6 +794,12 @@ import ServiceManagement
     private func saveCodexHomes() {
         if let data = try? JSONEncoder().encode(codexHomes) {
             defaults.set(data, forKey: "codexHomes")
+        }
+    }
+
+    private func saveCodexAccountSnapshots() {
+        if let data = try? JSONEncoder().encode(codexAccountSnapshots) {
+            defaults.set(data, forKey: "codexAccountSnapshots")
         }
     }
 

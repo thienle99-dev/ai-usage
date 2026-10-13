@@ -20,7 +20,7 @@ Danh sách này ghi lại tính năng của [CodexBar](CodexBar/README.md) có t
 - [ ] **Credential refresh có kiểm soát:** cooldown sau lỗi Keychain hoặc `invalid_grant`, backoff hợp lý và không lặp prompt xác thực.
 - [ ] **Bảo vệ reset bất thường:** giữ reset timestamp đáng tin gần nhất khi provider trả về reset weekly không hợp lý.
 - [ ] **Extra/scoped quota windows:** ánh xạ quota model-scoped, extra credits và rate limit pools khi API cung cấp.
-- [ ] **Nhiều tài khoản/workspace:** chọn tài khoản và hiển thị identity đúng provider; giữ dữ liệu giữa các account tách biệt.
+- [x] **Nhiều tài khoản/workspace (Codex):** chọn Codex home đã đăng ký, hiển thị account/plan và phân biệt home trùng identity; giữ quota cache riêng theo home. Các provider khác hiện dùng một credential/session và chưa có account switcher riêng.
 - [ ] **Status/usage history:** lưu snapshot có retention để xem biểu đồ và quota burndown.
 - [ ] **Cost theo model/session/project:** đọc log cục bộ với giới hạn tài nguyên và khử đếm trùng; phân biệt spend ghi nhận với hoá đơn thực tế.
 - [ ] **Dashboard bổ sung opt-in:** lấy review, breakdown hoặc credits history từ web khi provider không có API tương đương.

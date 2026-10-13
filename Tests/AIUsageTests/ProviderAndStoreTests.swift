@@ -939,6 +939,113 @@ final class ProviderAndStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testCodexAccountManagementMigratesAndKeepsHomeSnapshotsSeparate() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let live = root.appendingPathComponent(".codex", isDirectory: true)
+        let managedRoot = root.appendingPathComponent(".ai-usage/accounts/codex", isDirectory: true)
+        let cacheURL = root.appendingPathComponent("cache/snapshots.json")
+        try makeCodexHomeDir(at: live, marker: "ACCOUNT-A")
+        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
+        let defaults = isolatedDefaults()
+        let store = UsageStore(
+            providers: [CodexProvider(source: source)],
+            defaults: defaults,
+            cacheURL: cacheURL,
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json"),
+            managedCodexAccountsRootURL: managedRoot
+        )
+
+        await store.refresh()
+        try store.startManagingCodexAccounts()
+
+        let defaultSlotPath = store.codexDefaultHomeSlotURL.standardizedFileURL.path
+        let accountA = try XCTUnwrap(store.codexHomes.first(where: { $0.path != defaultSlotPath }))
+        XCTAssertEqual(codexMarker(in: URL(fileURLWithPath: accountA.path)), "ACCOUNT-A")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+        XCTAssertNil(store.snapshots[.codex])
+        XCTAssertEqual(store.activeCodexHomePath, defaultSlotPath)
+        XCTAssertEqual(store.codexHomeDisplayName(try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))), "Default Codex home")
+
+        await store.switchCodexAccount(to: accountA)
+        XCTAssertNil(store.codexSwitchError)
+        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-A")
+        let emptyDefaultHome = try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))
+        await source.update(Data("not json".utf8))
+        await store.switchCodexAccount(to: emptyDefaultHome)
+        XCTAssertEqual(codexMarker(in: live), nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+        XCTAssertEqual(store.activeCodexHomePath, defaultSlotPath)
+
+        try makeCodexHomeDir(at: live, marker: "ACCOUNT-B")
+        await source.update(codexAccountPayload(email: "b@example.com", window: "secondary", durationMins: 10080))
+        await store.refresh()
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
+        XCTAssertEqual(store.codexHomes.first(where: { $0.path == defaultSlotPath })?.lastSeenAccountID, "b@example.com")
+
+        await source.update(codexAccountPayload(email: "a@example.com"))
+        await store.switchCodexAccount(to: accountA)
+        XCTAssertNil(store.codexSwitchError)
+        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-A")
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "a@example.com")
+
+        let defaultHome = try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))
+        await source.update(Data("not json".utf8))
+        await store.switchCodexAccount(to: defaultHome)
+        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-B")
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
+        XCTAssertNotNil(store.snapshots[.codex]?.error)
+
+        let restarted = UsageStore(
+            providers: [CodexProvider(source: FixtureCodexSource(data: Data("not json".utf8)))],
+            defaults: defaults,
+            cacheURL: cacheURL,
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json"),
+            managedCodexAccountsRootURL: managedRoot
+        )
+        XCTAssertEqual(restarted.snapshots[.codex]?.accountID, "b@example.com")
+        let restartedAccountA = try XCTUnwrap(restarted.codexHomes.first(where: { $0.path == accountA.path }))
+        await restarted.switchCodexAccount(to: restartedAccountA)
+        XCTAssertEqual(restarted.snapshots[.codex]?.accountID, "a@example.com")
+        XCTAssertEqual(restarted.snapshots[.codex]?.windows.first?.validUtilization, 10)
+        XCTAssertNotNil(restarted.snapshots[.codex]?.error)
+    }
+
+    @MainActor
+    func testCodexAccountManagementRefusesMissingAuthAndOccupiedDefaultSlot() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent(".codex", isDirectory: true)
+        let managedRoot = root.appendingPathComponent(".ai-usage/accounts/codex", isDirectory: true)
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+        let store = UsageStore(
+            providers: [],
+            defaults: isolatedDefaults(),
+            startImmediately: false,
+            codexAuthFileURL: live.appendingPathComponent("auth.json"),
+            managedCodexAccountsRootURL: managedRoot
+        )
+        XCTAssertThrowsError(try store.startManagingCodexAccounts()) { error in
+            XCTAssertEqual(error as? CodexHomeError, .liveHomeMissingAuth)
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: managedRoot.deletingLastPathComponent().path) == false)
+
+        try Data("{}".utf8).write(to: live.appendingPathComponent("auth.json"))
+        try FileManager.default.createDirectory(at: store.codexDefaultHomeSlotURL, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.startManagingCodexAccounts()) { error in
+            XCTAssertEqual(error as? CodexHomeError, .managedSlotOccupied(store.codexDefaultHomeSlotURL.path))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+    }
+
+    @MainActor
     func testCodexHomeSwitchRollsBackOnIdentityMismatch() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

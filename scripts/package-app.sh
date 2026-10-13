@@ -35,6 +35,13 @@ if [ -n "$SPARKLE_FRAMEWORK" ]; then
     rm -rf "$APP/Contents/Frameworks/Sparkle.framework"
   fi
   cp -R "$SPARKLE_FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
+for DEV_RPATH in \
+  @loader_path/../artifacts/Sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64 \
+  @loader_path/../../artifacts/Sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64 \
+  @loader_path/../../../artifacts/Sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64
+do
+  install_name_tool -delete_rpath "$DEV_RPATH" "$APP/Contents/MacOS/AIUsage"
+done
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/AIUsage"
 else
   echo "Sparkle.framework was not found in SwiftPM artifacts" >&2

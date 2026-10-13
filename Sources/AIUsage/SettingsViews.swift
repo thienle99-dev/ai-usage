@@ -3,6 +3,39 @@ import AppKit
 
 // MARK: - Sidebar
 
+enum SettingsCategory: String, CaseIterable, Identifiable {
+    case general = "General"
+    case menuBar = "Menu Bar"
+    case providers = "Providers"
+    case integrations = "Integrations"
+    case appearance = "Appearance"
+    case about = "About"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .general: "gearshape"
+        case .menuBar: "menubar.rectangle"
+        case .providers: "square.grid.2x2"
+        case .integrations: "puzzlepiece"
+        case .appearance: "circle.lefthalf.filled"
+        case .about: "info.circle"
+        }
+    }
+
+    var subtitle: String? {
+        switch self {
+        case .general: "Configure your AI usage monitor."
+        case .menuBar: "Choose what appears in the menu bar."
+        case .providers: "Accounts, status, and usage sources."
+        case .integrations: "Manage CLI tools and Claude Code features."
+        case .appearance: "Match System Appearance, or choose Light or Dark."
+        case .about: nil
+        }
+    }
+}
+
 struct SettingsSidebarView: View {
     @Binding var selection: String
 
@@ -11,10 +44,10 @@ struct SettingsSidebarView: View {
             get: { selection },
             set: { selection = $0 ?? "General" }
         )) {
-            Label("General", systemImage: "gearshape").tag("General")
-            Label("Appearance", systemImage: "circle.lefthalf.filled").tag("Appearance")
-            Label("Providers", systemImage: "square.grid.2x2").tag("Providers")
-            Label("About", systemImage: "info.circle").tag("About")
+            ForEach(SettingsCategory.allCases) { category in
+                Label(LocalizedStringKey(category.rawValue), systemImage: category.systemImage)
+                    .tag(category.rawValue)
+            }
         }
         .listStyle(.sidebar)
         .font(.system(size: 13))
@@ -289,6 +322,7 @@ struct SettingsErrorText: View {
 
 struct GeneralSettingsView: View {
     var store: Bindable<UsageStore>
+    let category: SettingsCategory
     @State private var claudeStatusLineState: ClaudeStatusLineManager.State = .notInstalled
     @State private var claudeStatusLineError: String?
     @State private var claudePaneState: ClaudePaneManager.State = .notInstalled
@@ -309,14 +343,28 @@ struct GeneralSettingsView: View {
     @AppStorage("claudeTokenSaverEnabled") private var claudeTokenSaverEnabled = false
     @AppStorage("claudeBeginnerModeEnabled") private var claudeBeginnerModeEnabled = false
 
+    private var menuBarDescription: String {
+        switch store.wrappedValue.menuBarMode {
+        case .currentProvider:
+            "Follows the provider selected in the dashboard; Overview falls back to the highest usage."
+        case .highestUsageProvider:
+            "Shows the enabled provider with the highest valid usage percentage."
+        case .frontmostAppProvider:
+            "Follows a recognized foreground app; unknown apps fall back to the selected provider, then highest usage."
+        case .singleProvider:
+            "Shows the selected provider's highest window. Falls back to combined usage while it is hidden."
+        default:
+            "Combined usage uses the highest valid percentage across enabled usage windows."
+        }
+    }
+
     var body: some View {
-        SettingsPage(title: "General", subtitle: "Configure your AI usage monitor.") {
+        SettingsPage(title: category.rawValue, subtitle: category.subtitle) {
+            if category == .menuBar {
             SettingsSection(title: "Menu Bar") {
                 SettingsPickerRow(
                     title: "Display",
-                    description: store.wrappedValue.menuBarMode == .singleProvider
-                        ? "Shows the selected provider's highest window. Falls back to combined usage while it is hidden."
-                        : "Combined usage uses the highest valid percentage across enabled usage windows.",
+                    description: menuBarDescription,
                     tooltip: "Choose what appears in the menu bar.",
                     selection: store.menuBarMode
                 ) {
@@ -329,6 +377,8 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
+            }
+            if category == .general {
             SettingsSection(title: "Refresh") {
                 SettingsPickerRow(
                     title: "Automatic refresh",
@@ -350,6 +400,8 @@ struct GeneralSettingsView: View {
                     isOn: store.autoStartUsageWindow
                 )
             }
+            }
+            if category == .integrations {
             SettingsSection(title: "CLI Integration") {
                 HStack(spacing: 10) {
                     Image(systemName: "terminal")
@@ -565,6 +617,8 @@ struct GeneralSettingsView: View {
                     isOn: $promptCacheWarningsEnabled
                 )
             }
+            }
+            if category == .general {
             SettingsSection(title: "Notifications") {
                 SettingsToggleRow(
                     icon: "bell",
@@ -599,54 +653,20 @@ struct GeneralSettingsView: View {
                         .padding(.vertical, 4)
                 }
             }
-            SettingsSection(title: "Visible providers") {
-                ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
-                    if index > 0 { SettingsRowDivider() }
-                    HStack(spacing: 10) {
-                        Image(systemName: provider.systemImage)
-                            .font(.system(size: 16))
-                            .foregroundStyle(UsageTheme.provider(provider))
-                            .frame(width: 22)
-                            .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(provider.displayName)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(UsageTheme.primaryText)
-                            Text(providerSource(provider))
-                                .font(.system(size: 11))
-                                .foregroundStyle(UsageTheme.secondaryText)
-                                .lineLimit(1)
-                        }
-                        Spacer(minLength: 6)
-                        if ProviderConfigFile.url(for: provider) != nil {
-                            ProviderConfigButton(provider: provider)
-                        }
-                        ConnectionStatusView(
-                            status: store.wrappedValue.status(for: provider),
-                            isRefreshing: store.wrappedValue.refreshing.contains(provider)
-                        )
-                        Toggle(provider.displayName, isOn: Binding(
-                            get: { store.wrappedValue.visibleProviders.contains(provider) },
-                            set: { enabled in
-                                if enabled { store.wrappedValue.visibleProviders.insert(provider) }
-                                else {
-                                    store.wrappedValue.visibleProviders.remove(provider)
-                                    if store.wrappedValue.selectedProvider == provider {
-                                        store.wrappedValue.selectedProvider = nil
-                                    }
-                                }
-                            }
-                        ))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .accessibilityLabel(provider.displayName)
-                    }
-                    .padding(.vertical, 7)
-                    .frame(minHeight: 44)
-                }
+            SettingsSection(title: "Usage thresholds") {
+                ThresholdSettingRow(label: "Warning", value: store.warningThreshold, range: 50...95, color: UsageTheme.warning)
+                SettingsRowDivider()
+                ThresholdSettingRow(label: "Critical", value: store.criticalThreshold, range: 70...100, color: UsageTheme.critical)
+                Text("Thresholds control warning colors and quota notifications.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 4)
+            }
             }
         }
         .onAppear {
+            guard category == .integrations else { return }
             refreshClaudeStatusLineState()
             refreshClaudePaneState()
             refreshRTKClaudeState()
@@ -655,6 +675,16 @@ struct GeneralSettingsView: View {
         }
         .onChange(of: claudeTokenSaverEnabled) { _, _ in syncClaudeResponseModes() }
         .onChange(of: claudeBeginnerModeEnabled) { _, _ in syncClaudeResponseModes() }
+        .onChange(of: store.wrappedValue.warningThreshold) {
+            if store.wrappedValue.warningThreshold >= store.wrappedValue.criticalThreshold {
+                store.wrappedValue.criticalThreshold = min(100, store.wrappedValue.warningThreshold + 5)
+            }
+        }
+        .onChange(of: store.wrappedValue.criticalThreshold) {
+            if store.wrappedValue.criticalThreshold <= store.wrappedValue.warningThreshold {
+                store.wrappedValue.warningThreshold = max(50, store.wrappedValue.criticalThreshold - 5)
+            }
+        }
         .sheet(isPresented: $showingClaudeHandoff) {
             ClaudeProgressHandoffSheet()
                 .frame(minWidth: 560, minHeight: 460)
@@ -1093,26 +1123,7 @@ struct AppearanceSettingsView: View {
                     .accessibilityLabel("Dashboard theme")
                 }
             }
-            SettingsSection(title: "Usage thresholds") {
-                ThresholdSettingRow(label: "Warning", value: store.warningThreshold, range: 50...95, color: UsageTheme.warning)
-                SettingsRowDivider()
-                ThresholdSettingRow(label: "Critical", value: store.criticalThreshold, range: 70...100, color: UsageTheme.critical)
-                Text("Threshold colors apply to valid usage values in cards and the menu bar.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(UsageTheme.secondaryText)
-                    .padding(.vertical, 4)
-            }
             UsageCardLayoutSettings()
-        }
-        .onChange(of: store.wrappedValue.warningThreshold) {
-            if store.wrappedValue.warningThreshold >= store.wrappedValue.criticalThreshold {
-                store.wrappedValue.criticalThreshold = min(100, store.wrappedValue.warningThreshold + 5)
-            }
-        }
-        .onChange(of: store.wrappedValue.criticalThreshold) {
-            if store.wrappedValue.criticalThreshold <= store.wrappedValue.warningThreshold {
-                store.wrappedValue.warningThreshold = max(50, store.wrappedValue.criticalThreshold - 5)
-            }
         }
     }
 }
@@ -1287,9 +1298,56 @@ struct ProvidersSettingsView: View {
     @State private var openCodeCredentialMessage: String?
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
     @State private var codexHomeMessage: String?
+    @State private var showingCodexMigrationConfirmation = false
 
     var body: some View {
         SettingsPage(title: "Providers", subtitle: "Accounts, status, and usage sources.") {
+            SettingsSection(title: "Visible providers") {
+                ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
+                    if index > 0 { SettingsRowDivider() }
+                    HStack(spacing: 10) {
+                        Image(systemName: provider.systemImage)
+                            .font(.system(size: 16))
+                            .foregroundStyle(UsageTheme.provider(provider))
+                            .frame(width: 22)
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(provider.displayName)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(UsageTheme.primaryText)
+                            Text(providerSource(provider))
+                                .font(.system(size: 11))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 6)
+                        if ProviderConfigFile.url(for: provider) != nil {
+                            ProviderConfigButton(provider: provider)
+                        }
+                        ConnectionStatusView(
+                            status: store.status(for: provider),
+                            isRefreshing: store.refreshing.contains(provider)
+                        )
+                        Toggle(provider.displayName, isOn: Binding(
+                            get: { store.visibleProviders.contains(provider) },
+                            set: { enabled in
+                                if enabled { store.visibleProviders.insert(provider) }
+                                else {
+                                    store.visibleProviders.remove(provider)
+                                    if store.selectedProvider == provider {
+                                        store.selectedProvider = nil
+                                    }
+                                }
+                            }
+                        ))
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .accessibilityLabel(provider.displayName)
+                    }
+                    .padding(.vertical, 7)
+                    .frame(minHeight: 44)
+                }
+            }
             SettingsSection(title: "Providers") {
                 ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
                     if index > 0 { SettingsRowDivider() }
@@ -1305,6 +1363,27 @@ struct ProvidersSettingsView: View {
             CopilotSessionContent()
             SettingsSection(title: "OpenCode session") {
                 openCodeContent
+            }
+        }
+        .confirmationDialog(
+            "Move current Codex home into AI Usage Monitor?",
+            isPresented: $showingCodexMigrationConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Move home and prepare default login") {
+                do {
+                    try store.startManagingCodexAccounts()
+                    codexHomeMessage = "Home moved. Sign in with `codex login` to add another account to the default home."
+                } catch {
+                    codexHomeMessage = error.localizedDescription
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Source: \(store.codexLiveHomeURL.path)")
+                Text("Managed storage: \(store.codexDefaultHomeSlotURL.deletingLastPathComponent().path)")
+                Text("This moves the complete home and prepares an empty default home for normal Codex sign-in. Close Codex, terminals, and IDE sessions first.")
             }
         }
     }
@@ -1402,7 +1481,25 @@ struct ProvidersSettingsView: View {
 
     @ViewBuilder
     private var codexHomesContent: some View {
-        Text("Registered Codex home folders. Making one active moves it into ~/.codex so it becomes live; the current live folder moves back to its slot. Only folders move — credentials are never read or changed here.")
+        if !store.codexAccountManagementStarted {
+            Text("Move the account currently used by Codex into app-managed storage. Then sign in to another account normally with Codex CLI; both homes can be switched later.")
+                .font(.system(size: 11))
+                .foregroundStyle(UsageTheme.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, 4)
+            HStack {
+                Spacer()
+                Button("Start managing accounts…") {
+                    showingCodexMigrationConfirmation = true
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(store.codexSwitchInFlight || store.refreshing.contains(.codex))
+            }
+            .padding(.bottom, 4)
+            SettingsRowDivider()
+        }
+        Text("Registered Codex home folders. Making one active moves it into the configured Codex home (CODEX_HOME, or ~/.codex when unset); the current live folder moves back to its slot. Only folders move — credentials are never read or changed here.")
             .font(.system(size: 11))
             .foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
@@ -1448,16 +1545,16 @@ struct ProvidersSettingsView: View {
                         .frame(width: 22)
                         .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(home.displayName)
+                        Text(store.codexHomeDisplayName(home))
                             .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(home.lastSeenEmail == nil ? UsageTheme.secondaryText : UsageTheme.primaryText)
+                            .foregroundStyle(home.lastSeenAccount == nil && home.lastSeenEmail == nil ? UsageTheme.secondaryText : UsageTheme.primaryText)
                         Text(home.path)
                             .font(.system(size: 10.5))
                             .foregroundStyle(UsageTheme.secondaryText)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         if store.isCodexSlotEmpty(home) && !store.isCodexHomeActive(home) {
-                            Text("Empty slot")
+                            Text(store.isCodexDefaultHomeSlot(home) ? "Ready for Codex sign-in" : "Empty slot")
                                 .font(.system(size: 10.5))
                                 .foregroundStyle(UsageTheme.mutedText)
                         }
@@ -1471,10 +1568,15 @@ struct ProvidersSettingsView: View {
                                 .foregroundStyle(UsageTheme.secondaryText)
                         }
                     } else {
-                        Button("Make active") { Task { await store.switchCodexAccount(to: home) } }
+                        let isEmpty = store.isCodexSlotEmpty(home)
+                        Button(isEmpty
+                            ? (store.isCodexDefaultHomeSlot(home) ? "Use default Codex home" : "Sign in first")
+                            : "Use with Codex CLI") {
+                            Task { await store.switchCodexAccount(to: home) }
+                        }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .disabled(store.codexSwitchInFlight || store.refreshing.contains(.codex))
+                            .disabled((isEmpty && !store.isCodexDefaultHomeSlot(home)) || store.codexSwitchInFlight || store.refreshing.contains(.codex))
                     }
                     Button { store.removeCodexHome(home) } label: {
                         Image(systemName: "trash")
@@ -1482,8 +1584,8 @@ struct ProvidersSettingsView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .disabled(store.codexSwitchInFlight)
-                    .help("Remove \(home.displayName) from the registry (files stay on disk)")
-                    .accessibilityLabel("Remove \(home.displayName)")
+                    .help("Remove \(store.codexHomeDisplayName(home)) from the registry (files stay on disk)")
+                    .accessibilityLabel("Remove \(store.codexHomeDisplayName(home))")
                 }
                 .padding(.vertical, 6)
                 .frame(minHeight: 44)

@@ -477,7 +477,7 @@ struct UsagePopover: View {
             .padding(.bottom, 3)
         }
         .padding(7)
-        .frame(width: 205)
+        .frame(width: 230)
         .background(UsageTheme.card)
     }
 
@@ -699,21 +699,14 @@ private struct ProviderUsageCard: View {
     private var codexAccountSwitcher: some View {
         let isBusy = store.codexSwitchInFlight || store.refreshing.contains(.codex)
         let canIdentifyActiveHome = store.codexHomes.contains(where: store.isCodexHomeActive)
+        let activeHome = store.codexHomes.first(where: store.isCodexHomeActive)
+        let currentIdentity = activeHome.map(store.codexHomeDisplayName) ?? snapshot?.account ?? "Current Codex account"
 
         return Menu {
-            if let currentAccount = snapshot?.account, !currentAccount.isEmpty {
-                Button {
-                } label: {
-                    Label("Current · \(currentAccount)", systemImage: "checkmark")
-                }
-                .disabled(true)
-            } else {
-                Button {
-                } label: {
-                    Label("Current Codex account", systemImage: "checkmark")
-                }
-                .disabled(true)
+            Button {} label: {
+                Label("Current · \(currentIdentity)", systemImage: "checkmark")
             }
+            .disabled(true)
             Divider()
 
             if store.codexHomes.isEmpty {
@@ -721,16 +714,21 @@ private struct ProviderUsageCard: View {
             } else if !canIdentifyActiveHome {
                 Button("Current home must be registered in Settings") {}.disabled(true)
                 ForEach(store.codexHomes) { home in
-                    Button(home.displayName) {}.disabled(true)
+                    Button(store.codexHomeDisplayName(home)) {}.disabled(true)
                 }
             } else {
                 ForEach(store.codexHomes.filter { !store.isCodexHomeActive($0) }) { home in
                     Button {
                         Task { await store.switchCodexAccount(to: home) }
                     } label: {
-                        Text(home.displayName)
+                        HStack(spacing: 5) {
+                            Text(store.codexHomeDisplayName(home))
+                            if store.isCodexSlotEmpty(home) {
+                                Text("Empty").foregroundStyle(.secondary)
+                            }
+                        }
                     }
-                    .disabled(isBusy)
+                    .disabled(isBusy || (store.isCodexSlotEmpty(home) && !store.isCodexDefaultHomeSlot(home)))
                 }
                 if store.codexHomes.allSatisfy(store.isCodexHomeActive) {
                     Button("No other registered accounts") {}.disabled(true)
@@ -1093,19 +1091,20 @@ struct SettingsWindowView: View {
 
     var body: some View {
         @Bindable var store = store
+        let category = SettingsCategory(rawValue: selection) ?? .general
         NavigationSplitView {
             SettingsSidebarView(selection: $selection)
         } detail: {
             ScrollView {
-                switch selection {
-                case "Appearance":
+                switch category {
+                case .appearance:
                     AppearanceSettingsView(store: $store)
-                case "Providers":
+                case .providers:
                     ProvidersSettingsView()
-                case "About":
+                case .about:
                     AboutSettingsView()
-                default:
-                    GeneralSettingsView(store: $store)
+                case .general, .menuBar, .integrations:
+                    GeneralSettingsView(store: $store, category: category)
                 }
             }
             .padding(24)

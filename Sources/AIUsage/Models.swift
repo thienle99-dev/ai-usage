@@ -227,9 +227,13 @@ struct CodexHome: Codable, Identifiable, Sendable, Equatable {
     var path: String
     var lastSeenAccountID: String?
     var lastSeenEmail: String?
+    var lastSeenAccount: String?
     var lastSeenAt: Date?
 
     var displayName: String {
+        if let account = lastSeenAccount?.trimmingCharacters(in: .whitespacesAndNewlines), !account.isEmpty {
+            return account
+        }
         if let email = lastSeenEmail?.trimmingCharacters(in: .whitespacesAndNewlines), !email.isEmpty {
             return email
         }
@@ -245,6 +249,11 @@ enum CodexHomeError: LocalizedError, Sendable, Equatable {
     case crossVolume
     case unknownLiveHome
     case busy
+    case managementAlreadyStarted
+    case liveHomeMissing
+    case liveHomeMissingAuth
+    case managedSlotOccupied(String)
+    case emptySlot
     case occupiedSlot(String)
     case leftoverSwapFolder(String)
     case moveFailed(String)
@@ -266,8 +275,18 @@ enum CodexHomeError: LocalizedError, Sendable, Equatable {
             "The live folder doesn't match any registered home. Refresh to identify it, or move a registered home into place manually first."
         case .busy:
             "Codex is busy. Try again in a moment."
+        case .managementAlreadyStarted:
+            "Managed Codex accounts are already set up."
+        case .liveHomeMissing:
+            "The active Codex home folder could not be found."
+        case .liveHomeMissingAuth:
+            "The active Codex home has no auth.json. Sign in to Codex before moving it."
+        case .managedSlotOccupied(let path):
+            "The managed account slot is already occupied: \(path)"
+        case .emptySlot:
+            "This Codex home has no account yet. Sign in to it first, then refresh usage."
         case .occupiedSlot(let path):
-            "That location is occupied. Pick a name that doesn't exist yet, or move it aside first."
+            "That location is occupied at \(path). Pick a name that doesn't exist yet, or move it aside first."
         case .leftoverSwapFolder(let path):
             "A leftover swap folder blocks switching: \(path). Inspect it, then move it aside."
         case .moveFailed(let detail):
