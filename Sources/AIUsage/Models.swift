@@ -158,6 +158,9 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case providerSpecific
     case criticalProviderOnly
     case singleProvider
+    case currentProvider
+    case highestUsageProvider
+    case frontmostAppProvider
 
     var id: String { rawValue }
     var title: String {
@@ -167,8 +170,13 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .providerSpecific: "Provider-specific"
         case .criticalProviderOnly: "Critical provider only"
         case .singleProvider: "Single provider"
+        case .currentProvider: "Current provider"
+        case .highestUsageProvider: "Highest usage provider"
+        case .frontmostAppProvider: "Active app"
         }
     }
+
+    static let quickSwitchSources: [Self] = [.currentProvider, .highestUsageProvider, .frontmostAppProvider]
 
     init(legacyValue: String) {
         switch legacyValue {
@@ -288,34 +296,70 @@ enum UsageAggregation {
 /// Pure menu-bar content for a display mode. Kept free of SwiftUI so the
 /// selection and fallback rules are unit-testable; MenuBarStatusView renders it.
 enum MenuBarContent {
+    static func sourceProvider(
+        mode: MenuBarDisplayMode,
+        currentProvider: Provider?,
+        frontmostAppProvider: Provider?,
+        snapshots: [Provider: UsageSnapshot],
+        enabled: Set<Provider>
+    ) -> Provider? {
+        switch mode {
+        case .currentProvider:
+            return usable(currentProvider, enabled: enabled) ?? highestUsageProvider(in: snapshots, enabled: enabled)
+        case .highestUsageProvider:
+            return highestUsageProvider(in: snapshots, enabled: enabled)
+        case .frontmostAppProvider:
+            return usable(frontmostAppProvider, enabled: enabled)
+                ?? usable(currentProvider, enabled: enabled)
+                ?? highestUsageProvider(in: snapshots, enabled: enabled)
+        default:
+            return nil
+        }
+    }
+
     static func text(
         mode: MenuBarDisplayMode,
         selectedProvider: Provider,
         snapshots: [Provider: UsageSnapshot],
         enabled: Set<Provider>,
-        criticalThreshold: Double
+        criticalThreshold: Double,
+        currentProvider: Provider? = nil,
+        frontmostAppProvider: Provider? = nil
     ) -> String {
         switch mode {
         case .iconOnly:
-            ""
+            return ""
         case .combinedUsage:
-            UsageAggregation.maximum(in: snapshots, enabled: enabled).map { "\(Int($0.rounded()))%" } ?? ""
+            return UsageAggregation.maximum(in: snapshots, enabled: enabled).map { "\(Int($0.rounded()))%" } ?? ""
         case .providerSpecific:
-            Provider.allCases.compactMap { provider in
+            return Provider.allCases.compactMap { provider in
                 UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled)
                     .map { "\(provider.menuBarAbbreviation) \(Int($0.rounded()))%" }
             }.joined(separator: " · ")
         case .criticalProviderOnly:
-            criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold)
+            return criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold)
                 .map(\.menuBarAbbreviation).joined(separator: " · ")
         case .singleProvider:
             if !enabled.contains(selectedProvider) {
                 // The chosen provider is hidden: fall back like combined usage.
-                text(mode: .combinedUsage, selectedProvider: selectedProvider, snapshots: snapshots, enabled: enabled, criticalThreshold: criticalThreshold)
+                return text(mode: .combinedUsage, selectedProvider: selectedProvider, snapshots: snapshots, enabled: enabled, criticalThreshold: criticalThreshold)
             } else if let usage = UsageAggregation.maximum(for: selectedProvider, in: snapshots, enabled: enabled) {
-                "\(selectedProvider.menuBarAbbreviation) \(Int(usage.rounded()))%"
+                return "\(selectedProvider.menuBarAbbreviation) \(Int(usage.rounded()))%"
             } else {
-                selectedProvider.menuBarAbbreviation
+                return selectedProvider.menuBarAbbreviation
+            }
+        case .currentProvider, .highestUsageProvider, .frontmostAppProvider:
+            guard let provider = sourceProvider(
+                mode: mode,
+                currentProvider: currentProvider,
+                frontmostAppProvider: frontmostAppProvider,
+                snapshots: snapshots,
+                enabled: enabled
+            ) else { return "" }
+            if let usage = UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled) {
+                return "\(provider.menuBarAbbreviation) \(Int(usage.rounded()))%"
+            } else {
+                return provider.menuBarAbbreviation
             }
         }
     }
@@ -325,11 +369,21 @@ enum MenuBarContent {
         selectedProvider: Provider,
         snapshots: [Provider: UsageSnapshot],
         enabled: Set<Provider>,
-        criticalThreshold: Double
+        criticalThreshold: Double,
+        currentProvider: Provider? = nil,
+        frontmostAppProvider: Provider? = nil
     ) -> String {
         switch mode {
         case .singleProvider:
             selectedProvider.systemImage
+        case .currentProvider, .highestUsageProvider, .frontmostAppProvider:
+            sourceProvider(
+                mode: mode,
+                currentProvider: currentProvider,
+                frontmostAppProvider: frontmostAppProvider,
+                snapshots: snapshots,
+                enabled: enabled
+            )?.systemImage ?? "chart.bar.fill"
         case .criticalProviderOnly
             where !criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold).isEmpty:
             "exclamationmark.triangle.fill"
@@ -348,6 +402,41 @@ enum MenuBarContent {
                   usage >= threshold else { return nil }
             return provider
         }
+    }
+
+    private static func usable(_ provider: Provider?, enabled: Set<Provider>) -> Provider? {
+        guard let provider, enabled.contains(provider) else { return nil }
+        return provider
+    }
+
+    private static func highestUsageProvider(
+        in snapshots: [Provider: UsageSnapshot],
+        enabled: Set<Provider>
+    ) -> Provider? {
+        var highest: (provider: Provider, utilization: Double)?
+        for provider in Provider.supported where enabled.contains(provider) {
+            guard let utilization = UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled) else { continue }
+            if let current = highest, utilization <= current.utilization { continue }
+            highest = (provider, utilization)
+        }
+        return highest?.provider
+    }
+}
+
+enum FrontmostApplicationProvider {
+    static func provider(bundleIdentifier: String?, localizedName: String?, processName: String? = nil) -> Provider? {
+        let identity = [bundleIdentifier, localizedName, processName]
+            .compactMap { $0?.lowercased() }
+            .joined(separator: " ")
+        if identity.contains("antigravity") { return .antigravity }
+        if identity.contains("cursor") { return .cursor }
+        if identity.contains("claude") { return .claude }
+        if identity.contains("codex") { return .codex }
+        if identity.contains("gemini") { return .gemini }
+        if identity.contains("copilot") { return .copilot }
+        if identity.contains("grok") { return .grok }
+        if identity.contains("opencode") { return .openCode }
+        return nil
     }
 }
 

@@ -49,6 +49,7 @@ import Darwin
 
 private struct MenuBarStatusView: View {
     let store: UsageStore
+    @State private var frontmostAppProvider: Provider?
 
     private var text: String {
         MenuBarContent.text(
@@ -56,7 +57,9 @@ private struct MenuBarStatusView: View {
             selectedProvider: store.menuBarProvider,
             snapshots: store.snapshots,
             enabled: store.visibleProviders,
-            criticalThreshold: store.criticalThreshold
+            criticalThreshold: store.criticalThreshold,
+            currentProvider: store.selectedProvider,
+            frontmostAppProvider: frontmostAppProvider
         )
     }
     private var symbol: String {
@@ -65,7 +68,9 @@ private struct MenuBarStatusView: View {
             selectedProvider: store.menuBarProvider,
             snapshots: store.snapshots,
             enabled: store.visibleProviders,
-            criticalThreshold: store.criticalThreshold
+            criticalThreshold: store.criticalThreshold,
+            currentProvider: store.selectedProvider,
+            frontmostAppProvider: frontmostAppProvider
         )
     }
 
@@ -79,6 +84,30 @@ private struct MenuBarStatusView: View {
         .foregroundStyle(.primary)
         .accessibilityLabel(text.isEmpty ? "AI Usage Monitor" : "AI Usage Monitor, \(text)")
         .help(text.isEmpty ? "AI Usage Monitor" : "AI Usage Monitor · \(text)")
+        .onAppear(perform: updateFrontmostApplication)
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didActivateApplicationNotification)) { notification in
+            guard let application = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                frontmostAppProvider = nil
+                return
+            }
+            setFrontmostProvider(from: application)
+        }
+    }
+
+    private func updateFrontmostApplication() {
+        guard let application = NSWorkspace.shared.frontmostApplication else {
+            frontmostAppProvider = nil
+            return
+        }
+        setFrontmostProvider(from: application)
+    }
+
+    private func setFrontmostProvider(from application: NSRunningApplication) {
+        frontmostAppProvider = FrontmostApplicationProvider.provider(
+            bundleIdentifier: application.bundleIdentifier,
+            localizedName: application.localizedName,
+            processName: application.executableURL?.lastPathComponent
+        )
     }
 }
 
@@ -397,6 +426,36 @@ struct UsagePopover: View {
                 .buttonStyle(.plain)
                 .background(activeLayout == layout ? UsageTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .accessibilityAddTraits(activeLayout == layout ? .isSelected : [])
+            }
+            Rectangle().fill(UsageTheme.separator).frame(height: 1).padding(.vertical, 3)
+            Text("Status Item Provider")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(UsageTheme.secondaryText)
+                .padding(.horizontal, 8)
+            ForEach(MenuBarDisplayMode.quickSwitchSources) { source in
+                Button {
+                    store.menuBarMode = source
+                    showLayoutPopover = false
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: source == .currentProvider ? "person.crop.circle" : source == .highestUsageProvider ? "chart.bar.fill" : "macwindow")
+                            .frame(width: 16)
+                        Text(source.title)
+                        Spacer(minLength: 8)
+                        if store.menuBarMode == source {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(store.menuBarMode == source ? UsageTheme.primaryText : UsageTheme.secondaryText)
+                    .padding(.horizontal, 8)
+                    .frame(height: 28)
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .background(store.menuBarMode == source ? UsageTheme.elevated : .clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .accessibilityAddTraits(store.menuBarMode == source ? .isSelected : [])
             }
             Rectangle().fill(UsageTheme.separator).frame(height: 1).padding(.vertical, 3)
             Button("Token & Cost Report…") {

@@ -140,7 +140,7 @@ const en: Messages = {
     items: [
       {
         title: 'Live menu bar',
-        detail: 'Four display modes: icon only, combined highest usage, per-provider, or critical-only. Monospaced digits so the number never jitters.',
+        detail: 'A single status item can follow the selected provider, highest usage, or recognized foreground app. Icon-only, combined, per-provider, critical-only, and fixed-provider displays remain available.',
       },
       {
         title: 'Warning thresholds',
@@ -329,7 +329,7 @@ const vi: Messages = {
     items: [
       {
         title: 'Menu bar trực tiếp',
-        detail: 'Bốn chế độ hiển thị: chỉ icon, usage cao nhất, từng provider, hoặc chỉ critical. Chữ số monospaced nên số không nhảy.',
+        detail: 'Một status item có thể theo provider đang chọn, provider usage cao nhất hoặc app foreground được nhận diện. Settings vẫn có chế độ chỉ icon, tổng hợp, từng provider, critical-only và provider cố định.',
       },
       {
         title: 'Ngưỡng cảnh báo',
