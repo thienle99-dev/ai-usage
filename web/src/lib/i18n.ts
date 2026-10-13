@@ -170,6 +170,10 @@ const en: Messages = {
         detail: 'Starts with your Mac and refreshes on a schedule you choose: 1 to 15 minutes, or manual only.',
       },
       {
+        title: 'Light and dark themes',
+        detail: 'The website follows your system appearance by default. Switch themes from the header and your choice is remembered for future visits.',
+      },
+      {
         title: 'Terminal and JSON',
         detail: 'Query cached quota or aggregate local Claude Code and Codex token logs from shell scripts, tmux, and Starship. JSON output has stable fields; quota queries never refresh providers.',
       },
@@ -364,6 +368,10 @@ const vi: Messages = {
       {
         title: 'Mở cùng máy',
         detail: 'Khởi động cùng macOS và refresh theo lịch bạn chọn: 1–15 phút hoặc chỉ thủ công.',
+      },
+      {
+        title: 'Giao diện sáng và tối',
+        detail: 'Website mặc định theo giao diện hệ thống. Bạn có thể đổi theme ở thanh đầu trang và lựa chọn sẽ được lưu cho lần truy cập sau.',
       },
       {
         title: 'Terminal và JSON',
