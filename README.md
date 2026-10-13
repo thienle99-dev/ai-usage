@@ -42,6 +42,16 @@ OpenCode usage uses the authenticated `opencode.ai` dashboard server functions t
 
 These provider endpoints/protocols are compatibility-sensitive and may change. Re-authenticate with the relevant CLI when the provider reports an authentication error. If Codex is unavailable, confirm `codex` is installed and can start `app-server`. If Claude usage is unavailable, sign in with Claude Code and try Refresh.
 
+## Add a Codex account from the CLI
+
+After initializing **Settings → Providers → Codex homes**, add another account without replacing the active one:
+
+```sh
+./scripts/ai-usage codex login
+```
+
+The command runs the installed Codex CLI interactively with a new `CODEX_HOME` under `~/.ai-usage/accounts/codex/`. A successful login registers that home for switching in Settings or from the dashboard. The command requires `codex` on `PATH`; interrupted or failed login attempts leave their new folder in place and do not register it.
+
 ## Quota-aware CLI preflight
 
 Use the bundled wrapper before a large CLI task. It reads the last local usage snapshot and never refreshes quota or calls a model:

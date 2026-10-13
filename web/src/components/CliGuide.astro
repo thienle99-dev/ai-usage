@@ -13,6 +13,8 @@ const copy = lang === 'vi'
       intro: 'Dùng cùng dữ liệu với AI Usage Monitor trong shell, tmux, Starship hoặc script. Các lệnh chỉ đọc local; không tạo model request.',
       installTitle: 'Chạy lệnh',
       installBody: 'Từ thư mục repository, gọi wrapper scripts/ai-usage. Để gọi ở mọi nơi, thêm scripts vào PATH hoặc đặt AI_USAGE_EXECUTABLE trỏ tới executable của app.',
+      codexTitle: 'Đăng nhập account Codex mới',
+      codexBody: 'Khởi tạo quản lý Codex homes trong Settings → Providers → Codex homes trước. Lệnh tạo một CODEX_HOME riêng, chạy Codex CLI tương tác và đăng ký home sau khi đăng nhập thành công; account đang dùng được giữ nguyên.',
       quotaTitle: 'Truy vấn quota',
       quotaBody: 'quota đọc snapshot mới nhất mà app đã lưu. Bỏ --provider để lấy tất cả provider; có thể truyền tên đầy đủ hoặc tên ngắn.',
       reportTitle: 'Báo cáo token',
@@ -35,6 +37,8 @@ const copy = lang === 'vi'
       intro: 'Use the same data as AI Usage Monitor in a shell, tmux, Starship, or your own scripts. These commands read local data and never make model requests.',
       installTitle: 'Run the command',
       installBody: 'From the repository, invoke scripts/ai-usage. To call it anywhere, put scripts on PATH or set AI_USAGE_EXECUTABLE to the packaged app executable.',
+      codexTitle: 'Sign in to a new Codex account',
+      codexBody: 'Initialize account management in Settings → Providers → Codex homes first. The command creates a separate CODEX_HOME, runs the Codex CLI interactively, and registers the home after a successful login, keeping the current account intact.',
       quotaTitle: 'Query quota',
       quotaBody: 'quota reads the latest snapshot saved by the app. Omit --provider for all providers; pass a full or short provider name to select one.',
       reportTitle: 'Token report',
@@ -67,6 +71,12 @@ const copy = lang === 'vi'
       <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage quota --provider codex
 ./scripts/ai-usage report --group provider --range 7d</code></pre>
       <p class="mt-3 text-xs text-mist/70">{copy.exampleNote}</p>
+    </section>
+
+    <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
+      <h2 class="font-display text-lg font-bold text-white">{copy.codexTitle}</h2>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{copy.codexBody}</p>
+      <pre class="font-mono mt-4 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-4 text-sm text-fog"><code>./scripts/ai-usage codex login</code></pre>
     </section>
 
     <section data-reveal class="rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-6">
