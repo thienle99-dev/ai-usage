@@ -15,7 +15,7 @@ import Darwin
            let applicationIcon = NSImage(contentsOf: iconURL) {
             // Sparkle reads NSApplicationIcon for its update progress window.
             // Menu bar apps otherwise leave AppKit's generic placeholder there.
-            NSApp.applicationIconImage = applicationIcon
+            NSApplication.shared.applicationIconImage = applicationIcon
         }
         _store = State(initialValue: UsageStore())
         _updateManager = StateObject(wrappedValue: UpdateManager())
