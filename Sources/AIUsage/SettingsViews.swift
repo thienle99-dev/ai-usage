@@ -43,11 +43,11 @@ private struct SettingsPageHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text(title)
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 22, weight: .semibold))
                 .foregroundStyle(UsageTheme.primaryText)
             if let subtitle {
-                Text(subtitle)
+                Text(LocalizedStringKey(subtitle))
                     .font(.system(size: 12))
                     .foregroundStyle(UsageTheme.secondaryText)
             }
@@ -64,11 +64,12 @@ struct SettingsSection<Content: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(title.uppercased())
+            Text(LocalizedStringKey(title))
                 .font(.system(size: 10.5, weight: .semibold))
                 .tracking(0.4)
                 .foregroundStyle(UsageTheme.secondaryText)
                 .padding(.leading, 10)
+                .textCase(.uppercase)
             VStack(alignment: .leading, spacing: 0) {
                 content
             }
@@ -138,11 +139,11 @@ struct SettingsRow<Control: View>: View {
                     .accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(title)
+                Text(LocalizedStringKey(title))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(UsageTheme.primaryText)
                 if let description {
-                    Text(description)
+                    Text(LocalizedStringKey(description))
                         .font(.system(size: 11))
                         .foregroundStyle(UsageTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1057,6 +1058,18 @@ struct AppearanceSettingsView: View {
     var body: some View {
         SettingsPage(title: "Appearance", subtitle: "Match System Appearance, or choose Light or Dark.") {
             SettingsSection(title: "Appearance") {
+                SettingsRow(title: "Language", description: "Choose the app language.") {
+                    Picker("Language", selection: store.language) {
+                        ForEach(AppLanguage.allCases) { language in
+                            Text(LocalizedStringKey(language.title)).tag(language.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 150)
+                    .accessibilityLabel("Language")
+                }
+                SettingsRowDivider()
                 SettingsRow(title: "Color scheme") {
                     Picker("", selection: store.appearance) {
                         Text("System").tag("system")
@@ -1763,6 +1776,8 @@ func providerHelp(_ provider: Provider) -> String {
 // MARK: - About
 
 struct AboutSettingsView: View {
+    @EnvironmentObject private var updateManager: UpdateManager
+
     private var versionText: String {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
         let build = Bundle.main.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String ?? "1"
@@ -1800,6 +1815,23 @@ struct AboutSettingsView: View {
                     .foregroundStyle(UsageTheme.mutedText)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.vertical, 4)
+            }
+            SettingsSection(title: "Updates") {
+                Button { updateManager.checkForUpdates() } label: {
+                    Label("Check for Updates…", systemImage: "arrow.down.circle")
+                        .font(.system(size: 13, weight: .medium))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!updateManager.isConfigured)
+                .padding(.vertical, 7)
+                if !updateManager.isConfigured {
+                    Text("Updates are available in signed release builds.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(UsageTheme.secondaryText)
+                        .padding(.bottom, 4)
+                }
             }
         }
     }

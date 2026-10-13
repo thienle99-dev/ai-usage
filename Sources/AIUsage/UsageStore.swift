@@ -43,6 +43,7 @@ import ServiceManagement
         didSet { defaults.set(menuBarProvider.rawValue, forKey: "menuBarProvider") }
     }
     var appearance = "system" { didSet { defaults.set(appearance, forKey: "appearance") } }
+    var language = AppLanguage.system.rawValue { didSet { defaults.set(language, forKey: "appLanguage") } }
     var autoStartUsageWindow = false { didSet { defaults.set(autoStartUsageWindow, forKey: "autoStartUsageWindow") } }
     var quotaNotificationsEnabled = false { didSet { defaults.set(quotaNotificationsEnabled, forKey: "quotaNotificationsEnabled") } }
     var launchAtLoginEnabled = false
@@ -84,6 +85,7 @@ import ServiceManagement
         default: nil
         }
     }
+    var locale: Locale { AppLanguage.preference(language).locale }
 
     var needsInitialRefreshOnOpen: Bool {
         guard refreshPolicy != .manual else { return false }
@@ -137,6 +139,7 @@ import ServiceManagement
             menuBarProvider = provider
         }
         appearance = (defaults.string(forKey: "appearance") ?? "system").lowercased()
+        language = AppLanguage.preference(defaults.string(forKey: "appLanguage")).rawValue
         autoStartUsageWindow = defaults.bool(forKey: "autoStartUsageWindow")
         quotaNotificationsEnabled = defaults.bool(forKey: "quotaNotificationsEnabled")
         if let data = defaults.data(forKey: "codexHomes"),

@@ -1,6 +1,6 @@
 # AI Usage Monitor
 
-A native macOS 14+ menu bar app for checking Claude Code, Codex, Cursor, and OpenCode usage. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, and the local Codex app-server protocol. It has no third-party runtime dependencies.
+A native macOS 14+ menu bar app for checking AI coding provider usage. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, the local Codex app-server protocol, and Sparkle for signed in-app updates.
 
 ## Build and run
 
@@ -19,6 +19,8 @@ open "dist/AI Usage Monitor.app"
 ```
 
 The app is an agent-style menu bar app, so it has no Dock icon. Open Settings from the popover gear button. Settings include General, Appearance, Providers, and About tabs.
+
+In **Settings → Appearance → Language**, choose the system language, English, or Tiếng Việt. **Settings → About → Updates** provides a manual update check in signed release builds; Sparkle also checks on its normal schedule. Releases publish a signed appcast at [GitHub Releases](https://github.com/thienle99-dev/ai-usage/releases/latest/download/appcast.xml). See [release instructions](docs/RELEASING.md) for signing setup.
 
 ## Usage and refresh
 

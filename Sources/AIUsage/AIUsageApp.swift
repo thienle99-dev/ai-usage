@@ -4,6 +4,7 @@ import Darwin
 
 @main struct AIUsageApp: App {
     @State private var store: UsageStore
+    @StateObject private var updateManager: UpdateManager
 
     init() {
         let arguments = Array(CommandLine.arguments.dropFirst())
@@ -11,21 +12,27 @@ import Darwin
             Darwin.exit(QuotaAwareCLI.run(arguments: arguments))
         }
         _store = State(initialValue: UsageStore())
+        _updateManager = StateObject(wrappedValue: UpdateManager())
     }
 
     var body: some Scene {
         MenuBarExtra {
             UsagePopover()
                 .environment(store)
+                .environmentObject(updateManager)
+                .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
         } label: {
             MenuBarStatusView(store: store)
+                .environment(\.locale, store.locale)
         }
         .menuBarExtraStyle(.window)
 
         Window("Settings", id: "settings") {
             SettingsWindowView()
                 .environment(store)
+                .environmentObject(updateManager)
+                .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
         }
         .defaultSize(width: 760, height: 560)
@@ -33,6 +40,7 @@ import Darwin
 
         Window("Token & Cost Report", id: "usage-report") {
             UsageReportView()
+                .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
         }
         .defaultSize(width: 880, height: 680)
