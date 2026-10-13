@@ -27,8 +27,17 @@ struct AntigravityProvider: UsageProvider {
     }
 
     func fetch() async throws -> UsageSnapshot {
-        guard var credential = AntigravityCredentials.decode(credentialReader())
-                ?? AntigravityCredentials.decode(try? Data(contentsOf: homeDirectory.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))) else {
+        let cliCredential = AntigravityCredentials.decode(
+            try? Data(contentsOf: homeDirectory.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
+        )
+        let keychainCredential = AntigravityCredentials.decode(credentialReader())
+        let now = Date.now.addingTimeInterval(60)
+        guard var credential = [keychainCredential, cliCredential].compactMap({ $0 }).max(by: { lhs, rhs in
+            let lhsFresh = lhs.expiry.map { $0 > now } ?? true
+            let rhsFresh = rhs.expiry.map { $0 > now } ?? true
+            if lhsFresh != rhsFresh { return !lhsFresh && rhsFresh }
+            return (lhs.expiry ?? .distantPast) < (rhs.expiry ?? .distantPast)
+        }) else {
             throw ProviderFailure.credentials("Sign in to Antigravity first. Its OAuth credential was not found.")
         }
         var accessToken = credential.accessToken
@@ -117,8 +126,9 @@ struct AntigravityOAuthClient: Sendable, Equatable {
 }
 
 enum AntigravityOAuthClientResolver {
-    /// Caps per-file reads; language-server binaries can be large.
-    static let maxArtifactBytes = 16 * 1024 * 1024
+    /// Bounds memory use when scanning large language-server binaries.
+    static let artifactScanChunkBytes = 1024 * 1024
+    private static let artifactScanOverlapBytes = 4096
     static let clientIDPattern = #"[0-9]+-[A-Za-z0-9_-]+\.apps\.googleusercontent\.com"#
     static let clientSecretPattern = #"GOCSPX-[A-Za-z0-9_-]{28}"#
 
@@ -135,8 +145,15 @@ enum AntigravityOAuthClientResolver {
            let secret = trimmed(environment["ANTIGRAVITY_OAUTH_CLIENT_SECRET"]) {
             return AntigravityOAuthClient(id: id, secret: secret)
         }
-        return discover(applicationRoots: applicationRoots, fileManager: fileManager)
+        if let applicationRoots {
+            return discover(applicationRoots: applicationRoots, fileManager: fileManager)
+        }
+        return installedClient
     }
+
+    /// A large installed language-server binary only needs to be scanned once
+    /// per app process when refreshing an expired session.
+    private static let installedClient = discover()
 
     static func discover(applicationRoots: [URL]? = nil, fileManager: FileManager = .default) -> AntigravityOAuthClient? {
         let roots = applicationRoots ?? [
@@ -174,11 +191,37 @@ enum AntigravityOAuthClientResolver {
     private static func scan(bundle: URL) -> AntigravityOAuthClient? {
         for relative in artifactRelativePaths {
             let url = bundle.appendingPathComponent(relative)
-            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { continue }
-            let text = String(decoding: Data(data.prefix(maxArtifactBytes)), as: UTF8.self)
-            if let client = unambiguousClient(in: text) { return client }
+            if let client = unambiguousClient(in: url) { return client }
         }
         return nil
+    }
+
+    /// Scans the entire artifact without loading a large executable into memory.
+    /// OAuth values are only inspected in memory and are never logged or stored.
+    private static func unambiguousClient(in artifactURL: URL) -> AntigravityOAuthClient? {
+        guard let handle = try? FileHandle(forReadingFrom: artifactURL) else { return nil }
+        defer { try? handle.close() }
+
+        var buffer = Data()
+        var clientIDs = Set<String>()
+        var clientSecrets = Set<String>()
+        do {
+            while let chunk = try handle.read(upToCount: artifactScanChunkBytes), !chunk.isEmpty {
+                buffer.append(chunk)
+                let text = String(decoding: buffer, as: UTF8.self)
+                clientIDs.formUnion(matches(clientIDPattern, in: text))
+                clientSecrets.formUnion(matches(clientSecretPattern, in: text))
+                guard clientIDs.count <= 1, clientSecrets.count <= 1 else { return nil }
+
+                if buffer.count > artifactScanOverlapBytes {
+                    buffer = Data(buffer.suffix(artifactScanOverlapBytes))
+                }
+            }
+        } catch {
+            return nil
+        }
+        guard let id = clientIDs.first, let secret = clientSecrets.first else { return nil }
+        return AntigravityOAuthClient(id: id, secret: secret)
     }
 
     private static func matchingBundles(under root: URL, fileManager: FileManager) -> [URL] {
@@ -209,10 +252,14 @@ enum AntigravityOAuthClientResolver {
     }
 
     private static func singleMatch(_ pattern: String, in text: String) -> String? {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
-        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
-        let values = Set(matches.compactMap { Range($0.range, in: text).map { String(text[$0]) } })
+        let values = matches(pattern, in: text)
         return values.count == 1 ? values.first : nil
+    }
+
+    private static func matches(_ pattern: String, in text: String) -> Set<String> {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        return Set(matches.compactMap { Range($0.range, in: text).map { String(text[$0]) } })
     }
 }
 
