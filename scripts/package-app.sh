@@ -24,6 +24,10 @@ DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} xcode
   build
 APP="$ROOT/dist/AI Usage Monitor.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+ICONSET="$ROOT/.build/AppIcon.iconset"
+mkdir -p "$ICONSET"
+swift "$ROOT/scripts/create-app-icon.swift" "$ROOT/web/public/favicon.svg" "$ICONSET"
+iconutil --convert icns --output "$APP/Contents/Resources/AppIcon.icns" "$ICONSET"
 cp .build/release/AIUsage "$APP/Contents/MacOS/AIUsage"
 cp -R .build/release/AIUsage_AIUsage.bundle "$APP/Contents/Resources/"
 cp -R "$ROOT/Sources/AIUsage/Resources/Localization/en.lproj" "$APP/Contents/Resources/"
@@ -56,7 +60,7 @@ cp -R "$ROOT/.build/widget-derived/Build/Products/Release/AIUsageWidget.appex" "
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>CFBundleExecutable</key><string>AIUsage</string><key>CFBundleIdentifier</key><string>com.local.aiusage</string><key>CFBundleName</key><string>AI Usage Monitor</string><key>CFBundleDisplayName</key><string>AI Usage Monitor</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>$APP_VERSION</string><key>CFBundleVersion</key><string>$APP_BUILD</string><key>LSMinimumSystemVersion</key><string>14.0</string><key>LSUIElement</key><true/><key>CFBundleLocalizations</key><array><string>en</string><string>vi</string></array><key>SUFeedURL</key><string>https://github.com/thienle99-dev/ai-usage/releases/latest/download/appcast.xml</string></dict></plist>
+<plist version="1.0"><dict><key>CFBundleExecutable</key><string>AIUsage</string><key>CFBundleIdentifier</key><string>com.local.aiusage</string><key>CFBundleName</key><string>AI Usage Monitor</string><key>CFBundleDisplayName</key><string>AI Usage Monitor</string><key>CFBundleIconFile</key><string>AppIcon</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>$APP_VERSION</string><key>CFBundleVersion</key><string>$APP_BUILD</string><key>LSMinimumSystemVersion</key><string>14.0</string><key>LSUIElement</key><true/><key>CFBundleLocalizations</key><array><string>en</string><string>vi</string></array><key>SUFeedURL</key><string>https://github.com/thienle99-dev/ai-usage/releases/latest/download/appcast.xml</string></dict></plist>
 PLIST
 if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
   /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string $SPARKLE_PUBLIC_ED_KEY" "$APP/Contents/Info.plist"
