@@ -3,6 +3,7 @@ import type { Lang, Messages } from '../lib/i18n';
 import { langBasePath } from '../lib/i18n';
 import { withBase } from '../lib/paths';
 import LangSwitcher from './LangSwitcher.astro';
+import ThemeToggle from './ThemeToggle.astro';
 
 interface Props {
   lang: Lang;
@@ -62,9 +63,10 @@ const repo = 'https://github.com/thienle99-dev/ai-usage';
         {t.nav.releases}
       </a>
       <LangSwitcher lang={lang} />
+      <ThemeToggle lang={lang} />
       <a
         href={releasesHref}
-        class="rounded-full bg-teal px-3 py-2 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(42,168,146,0.35)] transition hover:bg-teal-bright active:scale-[0.98] sm:px-4"
+        class="rounded-full bg-teal px-3 py-2 text-sm font-semibold text-on-accent shadow-[0_10px_30px_rgba(42,168,146,0.35)] transition hover:bg-teal-bright active:scale-[0.98] sm:px-4"
       >
         {t.hero.download}
       </a>

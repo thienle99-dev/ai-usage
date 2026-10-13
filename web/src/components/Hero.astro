@@ -32,7 +32,7 @@ const { t, releasesHref, repo } = Astro.props;
       <div class="mt-7 flex flex-wrap items-center gap-3">
         <a
           href={assetUrl()}
-          class="interactive-lift rounded-full bg-teal px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(42,168,146,0.35)] hover:bg-teal-bright"
+          class="interactive-lift rounded-full bg-teal px-5 py-2.5 text-sm font-semibold text-on-accent shadow-[0_10px_30px_rgba(42,168,146,0.35)] hover:bg-teal-bright"
         >
           {t.hero.download}
         </a>
@@ -50,7 +50,7 @@ const { t, releasesHref, repo } = Astro.props;
     </div>
     <div class="animate-rise animate-rise-delay-1" role="img" aria-label={t.hero.pillAria}>
       <div class="mx-auto w-fit rounded-2xl border border-white/10 bg-white/5 px-10 py-2.5 backdrop-blur">
-        <span class="rounded-full bg-teal px-3 py-1 text-sm font-bold text-white [font-variant-numeric:tabular-nums]">
+        <span class="rounded-full bg-teal px-3 py-1 text-sm font-bold text-on-accent [font-variant-numeric:tabular-nums]">
           <span class="mr-1 text-xs">✦</span>42%
         </span>
       </div>

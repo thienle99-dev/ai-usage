@@ -60,7 +60,14 @@ export type Messages = {
   };
   notFound: { title: string; subtitle: string; home: string };
   lang: { en: string; vi: string; label: string };
-  a11y: { skipToContent: string; primaryNav: string; pageScroll: string };
+  a11y: {
+    skipToContent: string;
+    primaryNav: string;
+    pageScroll: string;
+    toggleTheme: string;
+    switchToLight: string;
+    switchToDark: string;
+  };
 };
 
 const en: Messages = {
@@ -249,7 +256,14 @@ const en: Messages = {
     home: 'Back to home',
   },
   lang: { en: 'EN', vi: 'VI', label: 'Language' },
-  a11y: { skipToContent: 'Skip to content', primaryNav: 'Primary navigation', pageScroll: 'Page scroll' },
+  a11y: {
+    skipToContent: 'Skip to content',
+    primaryNav: 'Primary navigation',
+    pageScroll: 'Page scroll',
+    toggleTheme: 'Toggle color theme',
+    switchToLight: 'Switch to light theme',
+    switchToDark: 'Switch to dark theme',
+  },
 };
 
 const vi: Messages = {
@@ -438,7 +452,14 @@ const vi: Messages = {
     home: 'Về trang chủ',
   },
   lang: { en: 'EN', vi: 'VI', label: 'Ngôn ngữ' },
-  a11y: { skipToContent: 'Bỏ qua điều hướng, đến nội dung', primaryNav: 'Điều hướng chính', pageScroll: 'Tiến độ cuộn trang' },
+  a11y: {
+    skipToContent: 'Bỏ qua điều hướng, đến nội dung',
+    primaryNav: 'Điều hướng chính',
+    pageScroll: 'Tiến độ cuộn trang',
+    toggleTheme: 'Đổi giao diện sáng tối',
+    switchToLight: 'Chuyển sang giao diện sáng',
+    switchToDark: 'Chuyển sang giao diện tối',
+  },
 };
 
 export const messages: Record<Lang, Messages> = { en, vi };

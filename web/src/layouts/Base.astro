@@ -24,6 +24,21 @@ const canonical = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : un
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content={description} />
     <meta name="theme-color" content="#101415" />
+    <script is:inline>
+      (() => {
+        let theme = null;
+        try {
+          const saved = window.localStorage.getItem('ai-usage-theme');
+          if (saved === 'light' || saved === 'dark') theme = saved;
+        } catch {
+          // Fall back to the operating system preference.
+        }
+        theme ??= window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.classList.toggle('theme-light', theme === 'light');
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:type" content="website" />

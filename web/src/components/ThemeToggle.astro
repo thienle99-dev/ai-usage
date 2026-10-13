@@ -1,0 +1,74 @@
+---
+import type { Lang } from '../lib/i18n';
+import { messages } from '../lib/i18n';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const a11y = messages[lang].a11y;
+---
+
+<button
+  id="theme-toggle"
+  type="button"
+  class="theme-toggle inline-flex h-9 w-9 items-center justify-center rounded-full border border-white/15 bg-white/5 text-mist transition-colors hover:bg-white/10 hover:text-white sm:h-10 sm:w-10"
+  aria-label={a11y.toggleTheme}
+  title={a11y.toggleTheme}
+  data-light-label={a11y.switchToLight}
+  data-dark-label={a11y.switchToDark}
+>
+  <svg class="icon-moon h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M20.9 13A8.5 8.5 0 0 1 11 3.1 8.5 8.5 0 1 0 20.9 13Z"></path>
+  </svg>
+  <svg class="icon-sun h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="4"></circle>
+    <path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"></path>
+  </svg>
+</button>
+
+<script is:inline>
+  (() => {
+    const button = document.getElementById('theme-toggle');
+    const root = document.documentElement;
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const storageKey = 'ai-usage-theme';
+
+    const savedTheme = () => {
+      try {
+        const value = window.localStorage.getItem(storageKey);
+        return value === 'light' || value === 'dark' ? value : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const applyTheme = (theme) => {
+      root.dataset.theme = theme;
+      root.classList.toggle('theme-light', theme === 'light');
+      root.style.colorScheme = theme;
+      const label = theme === 'dark' ? button?.dataset.lightLabel : button?.dataset.darkLabel;
+      if (label) {
+        button.setAttribute('aria-label', label);
+        button.setAttribute('title', label);
+      }
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#101415' : '#f4f7f6');
+    };
+
+    applyTheme(root.dataset.theme === 'light' ? 'light' : 'dark');
+    button?.addEventListener('click', () => {
+      const nextTheme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      try {
+        window.localStorage.setItem(storageKey, nextTheme);
+      } catch {
+        // The theme still changes for this page when storage is unavailable.
+      }
+      applyTheme(nextTheme);
+    });
+
+    media.addEventListener('change', (event) => {
+      if (!savedTheme()) applyTheme(event.matches ? 'dark' : 'light');
+    });
+  })();
+</script>

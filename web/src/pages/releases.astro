@@ -47,7 +47,7 @@ const releases = (await getCollection('releases')).sort((a, b) =>
               <div class="mt-4 flex flex-wrap gap-2.5">
                 <a
                   href={assetUrl(r.data.version)}
-                  class="rounded-full bg-teal px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(42,168,146,0.35)] transition hover:bg-teal-bright active:scale-[0.98]"
+                  class="rounded-full bg-teal px-4 py-2 text-sm font-semibold text-on-accent shadow-[0_10px_30px_rgba(42,168,146,0.35)] transition hover:bg-teal-bright active:scale-[0.98]"
                 >
                   {t.releasesPage.downloadAsset}
                 </a>
