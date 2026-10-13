@@ -12,33 +12,37 @@ struct AntigravityProvider: UsageProvider {
     private let loader: any HTTPDataLoading
     private let homeDirectory: URL
     private let credentialReader: @Sendable () -> Data?
+    private let managedCredentialProvider: @Sendable () -> AntigravityStoredCredentialSelection?
     private let clientProvider: @Sendable () -> AntigravityOAuthClient?
 
     init(
         loader: any HTTPDataLoading = URLSessionDataLoader(),
         homeDirectory: URL? = nil,
         credentialReader: @escaping @Sendable () -> Data? = { AntigravityCredentials.keychainData() },
+        managedCredentialProvider: @escaping @Sendable () -> AntigravityStoredCredentialSelection? = { AntigravityAccountVault.activeCredential() },
         clientProvider: @escaping @Sendable () -> AntigravityOAuthClient? = { AntigravityOAuthClientResolver.resolve() }
     ) {
         self.loader = loader
         self.homeDirectory = homeDirectory ?? FileManager.default.homeDirectoryForCurrentUser
         self.credentialReader = credentialReader
+        self.managedCredentialProvider = managedCredentialProvider
         self.clientProvider = clientProvider
     }
 
     func fetch() async throws -> UsageSnapshot {
-        let cliCredential = AntigravityCredentials.decode(
-            try? Data(contentsOf: homeDirectory.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
-        )
-        let keychainCredential = AntigravityCredentials.decode(credentialReader())
-        let now = Date.now.addingTimeInterval(60)
-        guard var credential = [keychainCredential, cliCredential].compactMap({ $0 }).max(by: { lhs, rhs in
-            let lhsFresh = lhs.expiry.map { $0 > now } ?? true
-            let rhsFresh = rhs.expiry.map { $0 > now } ?? true
-            if lhsFresh != rhsFresh { return !lhsFresh && rhsFresh }
-            return (lhs.expiry ?? .distantPast) < (rhs.expiry ?? .distantPast)
-        }) else {
-            throw ProviderFailure.credentials("Sign in to Antigravity first. Its OAuth credential was not found.")
+        let managedSelection = managedCredentialProvider()
+        let selectedData: Data?
+        if let managedSelection {
+            selectedData = managedSelection.data
+            guard selectedData != nil else {
+                throw ProviderFailure.credentials(String(localized: "The selected Antigravity account is missing from Keychain. Remove it and add the account again."))
+            }
+        } else {
+            let cliData = try? Data(contentsOf: homeDirectory.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
+            selectedData = AntigravityCredentials.preferredData(keychainData: credentialReader(), cliData: cliData)
+        }
+        guard var credential = AntigravityCredentials.decode(selectedData) else {
+            throw ProviderFailure.credentials(String(localized: "Sign in to Antigravity first. Its OAuth credential was not found."))
         }
         var accessToken = credential.accessToken
         if credential.expiry.map({ $0 <= .now.addingTimeInterval(60) }) != false,
@@ -123,6 +127,27 @@ struct AntigravityProvider: UsageProvider {
 struct AntigravityOAuthClient: Sendable, Equatable {
     let id: String
     let secret: String
+}
+
+struct AntigravityCredentials {
+    let accessToken: String?
+    let refreshToken: String?
+    let expiry: Date?
+    let identityLabel: String?
+
+    static func preferredData(keychainData: Data?, cliData: Data?) -> Data? {
+        let candidates = [keychainData, cliData].compactMap { data -> (Data, AntigravityCredentials)? in
+            guard let data, let credentials = decode(data) else { return nil }
+            return (data, credentials)
+        }
+        let now = Date.now.addingTimeInterval(60)
+        return candidates.max { lhs, rhs in
+            let lhsFresh = lhs.1.expiry.map { $0 > now } ?? true
+            let rhsFresh = rhs.1.expiry.map { $0 > now } ?? true
+            if lhsFresh != rhsFresh { return !lhsFresh && rhsFresh }
+            return (lhs.1.expiry ?? .distantPast) < (rhs.1.expiry ?? .distantPast)
+        }?.0
+    }
 }
 
 enum AntigravityOAuthClientResolver {
@@ -273,12 +298,7 @@ private extension ProcessInfo {
     }
 }
 
-private struct AntigravityCredentials {
-    let accessToken: String?
-    let refreshToken: String?
-    let expiry: Date?
-    let identityLabel: String?
-
+extension AntigravityCredentials {
     static func keychainData() -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

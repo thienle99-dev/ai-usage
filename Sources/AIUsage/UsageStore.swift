@@ -58,6 +58,12 @@ import ServiceManagement
             else { defaults.removeObject(forKey: "activeCodexHomePath") }
         }
     }
+    private(set) var antigravityAccounts: [AntigravityAccount] = []
+    var activeAntigravityAccountID: String? {
+        didSet { AntigravityAccountVault.select(activeAntigravityAccountID, defaults: defaults) }
+    }
+    var antigravityAccountError: String?
+    var antigravityAccountSwitchInFlight = false
     var codexSwitchInFlight = false
     var codexSwitchError: String?
     @ObservationIgnored private var codexAccountSnapshots: [String: UsageSnapshot] = [:]
@@ -122,6 +128,8 @@ import ServiceManagement
         self.fileModificationDate = fileModificationDate ?? Self.defaultModificationDate
         self.autoStartRunner = autoStartRunner
         self.quotaDeliverer = quotaDeliverer
+        antigravityAccounts = AntigravityAccountVault.accounts(defaults: defaults)
+        activeAntigravityAccountID = AntigravityAccountVault.activeAccountID(defaults: defaults)
         if let raw = defaults.stringArray(forKey: "visibleProviders") {
             visibleProviders = Set(raw.compactMap(Provider.init(rawValue:)))
         }
@@ -267,6 +275,65 @@ import ServiceManagement
             }
         }
         save()
+    }
+
+    func addCurrentAntigravityAccount() async {
+        guard !antigravityAccountSwitchInFlight, !refreshing.contains(.antigravity) else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cliData = try? Data(contentsOf: home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
+        guard let data = AntigravityCredentials.preferredData(
+            keychainData: AntigravityCredentials.keychainData(),
+            cliData: cliData
+        ), let credentials = AntigravityCredentials.decode(data) else {
+            antigravityAccountError = String(localized: "No Antigravity sign-in was found. Sign in to Antigravity CLI or app, then try again.")
+            return
+        }
+        let identity = credentials.identityLabel
+            ?? "Antigravity account \(antigravityAccounts.count + 1)"
+        do {
+            let account = try AntigravityAccountVault.save(data, identity: identity, defaults: defaults)
+            antigravityAccounts = AntigravityAccountVault.accounts(defaults: defaults)
+            activeAntigravityAccountID = account.id
+            antigravityAccountError = nil
+            antigravityAccountSwitchInFlight = true
+            defer { antigravityAccountSwitchInFlight = false }
+            await refresh(provider: .antigravity)
+        } catch {
+            antigravityAccountError = error.localizedDescription
+        }
+    }
+
+    func switchAntigravityAccount(to id: String?) async {
+        guard !antigravityAccountSwitchInFlight else { return }
+        guard !refreshing.contains(.antigravity) else {
+            antigravityAccountError = String(localized: "Wait for the Antigravity refresh to finish, then switch accounts.")
+            return
+        }
+        if let id, !antigravityAccounts.contains(where: { $0.id == id }) { return }
+        antigravityAccountSwitchInFlight = true
+        defer { antigravityAccountSwitchInFlight = false }
+        activeAntigravityAccountID = id
+        antigravityAccountError = nil
+        await refresh(provider: .antigravity)
+    }
+
+    func removeAntigravityAccount(_ id: String) {
+        guard !antigravityAccountSwitchInFlight, !refreshing.contains(.antigravity) else {
+            antigravityAccountError = String(localized: "Wait for the Antigravity refresh to finish, then switch accounts.")
+            return
+        }
+        let wasActive = activeAntigravityAccountID == id
+        do {
+            try AntigravityAccountVault.remove(id, defaults: defaults)
+            antigravityAccounts = AntigravityAccountVault.accounts(defaults: defaults)
+            activeAntigravityAccountID = AntigravityAccountVault.activeAccountID(defaults: defaults)
+            antigravityAccountError = nil
+            if wasActive {
+                Task { await refresh(provider: .antigravity) }
+            }
+        } catch {
+            antigravityAccountError = error.localizedDescription
+        }
     }
 
     private func maybeStartUsageWindow(for snapshot: UsageSnapshot) {

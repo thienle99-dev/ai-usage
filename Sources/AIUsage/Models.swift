@@ -402,12 +402,12 @@ enum MenuBarContent {
                 frontmostAppProvider: frontmostAppProvider,
                 snapshots: snapshots,
                 enabled: enabled
-            )?.systemImage ?? "chart.bar.fill"
+            )?.systemImage ?? "sparkles"
         case .criticalProviderOnly
             where !criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold).isEmpty:
             "exclamationmark.triangle.fill"
         default:
-            "chart.bar.fill"
+            "sparkles"
         }
     }
 

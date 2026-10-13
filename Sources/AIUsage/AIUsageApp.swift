@@ -631,7 +631,11 @@ private struct ProviderUsageCard: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(provider.displayName), \(isExpanded ? "expanded" : "collapsed")")
                     .accessibilityHint("Toggles usage details")
-                    if provider == .codex { codexAccountSwitcher }
+                    if provider == .codex {
+                        codexAccountSwitcher
+                    } else if provider == .antigravity {
+                        antigravityAccountSwitcher
+                    }
                 }
                 if snapshot?.windows.isEmpty == true {
                     emptyState(for: snapshot)
@@ -676,7 +680,11 @@ private struct ProviderUsageCard: View {
             providerIdentity
             Spacer(minLength: 4)
             ConnectionStatusView(status: status, isRefreshing: store.refreshing.contains(provider))
-            if provider == .codex { codexAccountSwitcher }
+            if provider == .codex {
+                codexAccountSwitcher
+            } else if provider == .antigravity {
+                antigravityAccountSwitcher
+            }
         }
     }
 
@@ -757,6 +765,61 @@ private struct ProviderUsageCard: View {
         .help("Switch Codex account")
         .accessibilityLabel("Switch Codex account")
         .accessibilityHint("Choose a registered Codex home or manage accounts in Settings")
+    }
+
+    private var antigravityAccountSwitcher: some View {
+        let isBusy = store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity)
+        let activeAccount = store.antigravityAccounts.first { $0.id == store.activeAntigravityAccountID }
+        let currentIdentity = activeAccount?.displayName ?? snapshot?.account ?? String(localized: "Antigravity CLI/App sign-in")
+
+        return Menu {
+            Button {} label: {
+                Label("Current · \(currentIdentity)", systemImage: "checkmark")
+            }
+            .disabled(true)
+            Divider()
+
+            if store.activeAntigravityAccountID != nil {
+                Button("Use Antigravity CLI/App sign-in") {
+                    Task { await store.switchAntigravityAccount(to: nil) }
+                }
+                .disabled(isBusy)
+            }
+            ForEach(store.antigravityAccounts) { account in
+                if account.id != store.activeAntigravityAccountID {
+                    Button(account.displayName) {
+                        Task { await store.switchAntigravityAccount(to: account.id) }
+                    }
+                    .disabled(isBusy)
+                }
+            }
+            if store.antigravityAccounts.isEmpty {
+                Button("Save current account in Settings…", action: manageAccounts)
+            } else {
+                Divider()
+                Button("Manage Accounts…", action: manageAccounts)
+            }
+        } label: {
+            HStack(spacing: 3) {
+                if store.antigravityAccountSwitchInFlight {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "person.crop.circle")
+                }
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(UsageTheme.secondaryText)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(isBusy)
+        .help("Switch Antigravity account")
+        .accessibilityLabel("Switch Antigravity account")
+        .accessibilityHint("Choose a saved account or manage accounts in Settings")
     }
 
     @ViewBuilder private func metricContent(for layout: UsageCardLayout) -> some View {

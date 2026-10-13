@@ -751,7 +751,7 @@ final class ProviderAndStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             MenuBarContent.symbolName(mode: .combinedUsage, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
-            "chart.bar.fill"
+            "sparkles"
         )
     }
 

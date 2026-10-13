@@ -1299,6 +1299,7 @@ struct ProvidersSettingsView: View {
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
     @State private var codexHomeMessage: String?
     @State private var showingCodexMigrationConfirmation = false
+    @State private var antigravityAccountPendingRemoval: AntigravityAccount?
 
     var body: some View {
         SettingsPage(title: "Providers", subtitle: "Accounts, status, and usage sources.") {
@@ -1357,6 +1358,9 @@ struct ProvidersSettingsView: View {
             SettingsSection(title: "Codex homes") {
                 codexHomesContent
             }
+            SettingsSection(title: "Antigravity accounts") {
+                antigravityAccountsContent
+            }
             SettingsSection(title: "Cursor session") {
                 cursorContent
             }
@@ -1385,6 +1389,24 @@ struct ProvidersSettingsView: View {
                 Text("Managed storage: \(store.codexDefaultHomeSlotURL.deletingLastPathComponent().path)")
                 Text("This moves the complete home and prepares an empty default home for normal Codex sign-in. Close Codex, terminals, and IDE sessions first.")
             }
+        }
+        .confirmationDialog(
+            "Remove saved Antigravity account?",
+            isPresented: Binding(
+                get: { antigravityAccountPendingRemoval != nil },
+                set: { if !$0 { antigravityAccountPendingRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove saved account", role: .destructive) {
+                if let account = antigravityAccountPendingRemoval {
+                    store.removeAntigravityAccount(account.id)
+                }
+                antigravityAccountPendingRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { antigravityAccountPendingRemoval = nil }
+        } message: {
+            Text("This deletes the saved Antigravity credential from AI Usage Monitor’s Keychain. It does not sign out of Antigravity CLI or app.")
         }
     }
 
@@ -1609,6 +1631,78 @@ struct ProvidersSettingsView: View {
                 .foregroundStyle(UsageTheme.secondaryText)
                 .padding(.vertical, 2)
         }
+    }
+
+    @ViewBuilder
+    private var antigravityAccountsContent: some View {
+        Text("Save each Antigravity sign-in here, then switch accounts from the provider card. To add another account, sign in with Antigravity CLI or app first and save it here. Saved credentials stay in Keychain; switching here does not change the CLI or app sign-in.")
+            .font(.system(size: 11))
+            .foregroundStyle(UsageTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 4)
+
+        HStack {
+            Text("Use the live Antigravity CLI/App sign-in")
+                .font(.system(size: 12))
+                .foregroundStyle(UsageTheme.primaryText)
+            Spacer()
+            if store.activeAntigravityAccountID == nil {
+                Text("Active").font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+            } else {
+                Button("Use") { Task { await store.switchAntigravityAccount(to: nil) } }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
+            }
+        }
+        .padding(.vertical, 5)
+
+        ForEach(Array(store.antigravityAccounts.enumerated()), id: \.element.id) { index, account in
+            if index > 0 || store.activeAntigravityAccountID != nil { SettingsRowDivider() }
+            HStack(spacing: 9) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(UsageTheme.secondaryText)
+                    .frame(width: 22)
+                Text(account.displayName)
+                    .font(.system(size: 12))
+                    .foregroundStyle(UsageTheme.primaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 6)
+                if store.activeAntigravityAccountID == account.id {
+                    Text("Active").font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+                } else {
+                    Button("Use") { Task { await store.switchAntigravityAccount(to: account.id) } }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
+                }
+                Button {
+                    antigravityAccountPendingRemoval = account
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Remove saved Antigravity account")
+                .accessibilityLabel("Remove \(account.displayName)")
+                .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
+            }
+            .padding(.vertical, 5)
+        }
+
+        if let error = store.antigravityAccountError {
+            SettingsErrorText(text: error).padding(.vertical, 4)
+        }
+        HStack {
+            Spacer()
+            Button("Save current account") { Task { await store.addCurrentAntigravityAccount() } }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
+        }
+        .padding(.vertical, 4)
     }
 
     private func addCodexHomeWithPanel() {
