@@ -6,7 +6,7 @@ export const websiteUrl = 'https://ai-usage.vercel.app';
 export const releaseRepo = 'https://github.com/thienle99-dev/ai-usage';
 
 /** Pin marketing copy + default asset to this release. Bump when publishing. */
-export const currentRelease = '0.1.0';
+export const currentRelease = '1.0.1';
 export const currentReleaseTag = `v${currentRelease}`;
 export const currentReleaseUrl = `${releaseRepo}/releases/tag/${currentReleaseTag}`;
 export const releasesUrl = `${releaseRepo}/releases`;
