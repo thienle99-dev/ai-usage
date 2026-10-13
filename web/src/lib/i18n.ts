@@ -44,6 +44,9 @@ export type Messages = {
     steps: string[];
     commands: string[];
     binaries: string;
+    autoUpdateTitle: string;
+    autoUpdate: string;
+    firstLaunch: string;
   };
   faq: { eyebrow: string; title: string; items: { q: string; a: string }[] };
   footer: { tagline: string; releases: string; source: string; issues: string; license: string };
@@ -199,15 +202,14 @@ const en: Messages = {
   install: {
     eyebrow: 'Install',
     title: 'Install',
-    subtitle: 'Build from source in under a minute.',
-    requirements: 'Requires macOS 14+ and Swift 6. Sign in to each provider CLI first.',
-    steps: ['Clone the repository', 'Build the app bundle', 'Open it and enable providers in Settings'],
-    commands: [
-      'git clone https://github.com/thienle99-dev/ai-usage.git',
-      'cd ai-usage && ./scripts/package-app.sh',
-      'open dist/"AI Usage Monitor.app"',
-    ],
-    binaries: 'Prefer binaries? Tagged releases attach a signed .app under Releases.',
+    subtitle: 'Install the macOS app from a disk image.',
+    requirements: 'Requires macOS 14 or later. Sign in to each provider CLI first to connect its account.',
+    steps: ['Download the latest DMG from the button above or Releases.', 'Open the DMG, then drag AI Usage Monitor to Applications.', 'Open the app and enable providers in Settings.'],
+    commands: [],
+    binaries: 'If macOS blocks the first launch, Control-click the app, choose Open, then confirm.',
+    autoUpdateTitle: 'Automatic updates',
+    autoUpdate: 'Sparkle checks for updates automatically and prompts you when one is available. You can also check in Settings → About → Updates.',
+    firstLaunch: 'Updates are downloaded from the project release feed and installed after you confirm.',
   },
   faq: {
     eyebrow: 'FAQ',
@@ -399,15 +401,14 @@ const vi: Messages = {
   install: {
     eyebrow: 'Cài đặt',
     title: 'Install',
-    subtitle: 'Build từ source chưa tới một phút.',
-    requirements: 'Cần macOS 14+ và Swift 6. Đăng nhập từng provider CLI trước.',
-    steps: ['Clone repository', 'Build app bundle', 'Mở app và bật providers trong Settings'],
-    commands: [
-      'git clone https://github.com/thienle99-dev/ai-usage.git',
-      'cd ai-usage && ./scripts/package-app.sh',
-      'open dist/"AI Usage Monitor.app"',
-    ],
-    binaries: 'Muốn bản build sẵn? Release có tag đính kèm .app tại trang Releases.',
+    subtitle: 'Cài ứng dụng macOS từ file DMG.',
+    requirements: 'Yêu cầu macOS 14 trở lên. Đăng nhập CLI của từng provider trước để kết nối tài khoản.',
+    steps: ['Tải DMG mới nhất bằng nút phía trên hoặc tại Releases.', 'Mở DMG, kéo AI Usage Monitor vào Applications.', 'Mở ứng dụng và bật provider trong Settings.'],
+    commands: [],
+    binaries: 'Nếu macOS chặn lần mở đầu, Control-click ứng dụng, chọn Open rồi xác nhận.',
+    autoUpdateTitle: 'Tự động cập nhật',
+    autoUpdate: 'Sparkle tự kiểm tra bản cập nhật và thông báo khi có bản mới. Bạn cũng có thể kiểm tra trong Settings → About → Updates.',
+    firstLaunch: 'Bản cập nhật được tải từ release feed của dự án và cài sau khi bạn xác nhận.',
   },
   faq: {
     eyebrow: 'FAQ',

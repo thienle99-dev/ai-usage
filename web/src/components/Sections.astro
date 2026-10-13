@@ -107,12 +107,17 @@ const tagTone: Record<string, string> = {
               <span class="mr-1.5 text-teal-bright">{i + 1}.</span>
               {s}
             </p>
-            <pre class="font-mono mt-2 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-3 text-[0.83rem] text-fog"><code>{t.install.commands[i]}</code></pre>
+            {t.install.commands[i] && <pre class="font-mono mt-2 overflow-x-auto rounded-xl border border-white/10 bg-ink-soft p-3 text-[0.83rem] text-fog"><code>{t.install.commands[i]}</code></pre>}
           </li>
         ))
       }
     </ol>
     <p class="mt-3 text-[0.83rem] text-mist/70">{t.install.binaries}</p>
+    <div class="mt-5 rounded-xl border border-teal/20 bg-teal/5 p-4">
+      <h3 class="text-sm font-semibold text-white">{t.install.autoUpdateTitle}</h3>
+      <p class="mt-1 text-sm leading-relaxed text-mist">{t.install.autoUpdate}</p>
+      <p class="mt-1 text-xs leading-relaxed text-mist/70">{t.install.firstLaunch}</p>
+    </div>
   </div>
 </section>
 

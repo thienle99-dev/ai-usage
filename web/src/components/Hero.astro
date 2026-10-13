@@ -1,7 +1,7 @@
 ---
 import type { Messages } from '../lib/i18n';
 import { withVersion } from '../lib/i18n';
-import { assetUrl } from '../lib/downloads';
+import { dmgAssetUrl } from '../lib/downloads';
 import { withBase } from '../lib/paths';
 
 interface Props {
@@ -31,7 +31,7 @@ const { t, releasesHref, repo } = Astro.props;
       <p class="mt-5 max-w-xl text-base leading-relaxed text-mist sm:text-lg">{t.hero.subtitle}</p>
       <div class="mt-7 flex flex-wrap items-center gap-3">
         <a
-          href={assetUrl()}
+          href={dmgAssetUrl()}
           class="interactive-lift rounded-full bg-teal px-5 py-2.5 text-sm font-semibold text-on-accent shadow-[0_10px_30px_rgba(42,168,146,0.35)] hover:bg-teal-bright"
         >
           {t.hero.download}

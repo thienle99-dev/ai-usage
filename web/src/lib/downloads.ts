@@ -14,6 +14,9 @@ export const releasesUrl = `${releaseRepo}/releases`;
 export const assetFileName = (version = currentRelease) =>
   `AI-Usage-Monitor-v${version}-macos-arm64.zip`;
 
+export const dmgAssetUrl = (version = currentRelease) =>
+  `${releaseRepo}/releases/download/v${version}/AI-Usage-Monitor-v${version}-macos-arm64.dmg`;
+
 /** Direct download URL for a released asset (must match docs/RELEASING.md naming). */
 export const assetUrl = (version = currentRelease) =>
   `${releaseRepo}/releases/download/v${version}/${assetFileName(version)}`;
