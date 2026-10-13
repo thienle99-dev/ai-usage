@@ -11,6 +11,12 @@ import Darwin
         if ["preflight", "run", "statusline", "quota", "report", "waste", "codex"].contains(arguments.first) {
             Darwin.exit(QuotaAwareCLI.run(arguments: arguments))
         }
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let applicationIcon = NSImage(contentsOf: iconURL) {
+            // Sparkle reads NSApplicationIcon for its update progress window.
+            // Menu bar apps otherwise leave AppKit's generic placeholder there.
+            NSApp.applicationIconImage = applicationIcon
+        }
         _store = State(initialValue: UsageStore())
         _updateManager = StateObject(wrappedValue: UpdateManager())
     }
