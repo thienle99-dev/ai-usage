@@ -13,6 +13,15 @@
 "All Providers" = "All Providers";
 "No providers shown" = "No providers shown";
 "More actions" = "More actions";
+"Switch to Light appearance" = "Switch to Light appearance";
+"Switch to Dark appearance" = "Switch to Dark appearance";
+"Activate this account or refresh its usage" = "Activate this account or refresh its usage";
+"Connected" = "Connected";
+"Authentication required" = "Authentication required";
+"Rate limited" = "Rate limited";
+"Data unavailable" = "Data unavailable";
+"Error" = "Error";
+"%@%% used" = "%@%% used";
 "Refresh usage" = "Refresh usage";
 "Add account" = "Add account";
 "Current session" = "Current session";
@@ -23,6 +32,8 @@
 "Saved" = "Saved";
 "Selected" = "Selected";
 "Updated %@" = "Updated %@";
+"Last updated %@" = "Last updated %@";
+"Usage has not been refreshed" = "Usage has not been refreshed";
 "Not refreshed" = "Not refreshed";
 "Website" = "Website";
 "Quit" = "Quit";

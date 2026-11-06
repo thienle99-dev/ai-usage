@@ -4,6 +4,7 @@ import SwiftUI
 struct CompactPopoverView: View {
     @Environment(UsageStore.self) private var store
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.locale) private var locale
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
@@ -33,6 +34,7 @@ struct CompactPopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             CompactPopoverHeader(
+                locale: locale,
                 isRefreshing: store.isRefreshing,
                 refresh: { Task { await store.refresh() } },
                 addAccount: { presentSettings(tab: "Providers") },
@@ -46,7 +48,7 @@ struct CompactPopoverView: View {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 0) {
                     if providers.isEmpty {
-                        Text("No providers shown")
+                        Text(AppLocalization.string("No providers shown", locale: locale))
                             .font(.system(size: 11))
                             .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: colorSchemeContrast == .increased))
                             .padding(.vertical, 5)
@@ -89,21 +91,55 @@ struct CompactPopoverView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
+        .environment(\.locale, store.locale)
         .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
     }
 
     private var moreMenu: some View {
         Menu {
-            Button("All Providers") { store.selectedProvider = nil }
+            Button { store.selectedProvider = nil } label: {
+                Text(AppLocalization.string("All Providers", locale: locale))
+            }
                 .disabled(store.selectedProvider == nil)
             ForEach(store.providerOrder.filter { store.visibleProviders.contains($0) }) { provider in
                 Button(provider.displayName) { store.selectedProvider = provider }
                     .disabled(store.selectedProvider == provider)
             }
             Divider()
-            Button("Token & Cost Report…") { openWindow(id: "usage-report") }
-            Button("About…") { presentSettings(tab: "About") }
-            Link("Help", destination: URL(string: "https://github.com/thienle99-dev/ai-usage#readme")!)
+            Menu {
+                ForEach(AppLanguage.allCases) { language in
+                    Button {
+                        store.language = language.rawValue
+                    } label: {
+                        if store.language == language.rawValue {
+                            Label {
+                                Text(AppLocalization.string(language.title, locale: locale))
+                            } icon: {
+                                Image(systemName: "checkmark")
+                            }
+                        } else {
+                            Text(AppLocalization.string(language.title, locale: locale))
+                        }
+                    }
+                    .disabled(store.language == language.rawValue)
+                }
+            } label: {
+                Label {
+                    Text(AppLocalization.string("Language", locale: locale))
+                } icon: {
+                    Image(systemName: "character.bubble")
+                }
+            }
+            Divider()
+            Button { openWindow(id: "usage-report") } label: {
+                Text(AppLocalization.string("Token & Cost Report…", locale: locale))
+            }
+            Button { presentSettings(tab: "About") } label: {
+                Text(AppLocalization.string("About…", locale: locale))
+            }
+            Link(destination: URL(string: "https://github.com/thienle99-dev/ai-usage#readme")!) {
+                Text(AppLocalization.string("Help", locale: locale))
+            }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 12, weight: .regular))
@@ -116,8 +152,8 @@ struct CompactPopoverView: View {
         .fixedSize()
         .frame(width: 28, height: 28)
         .modifier(CompactHeaderHoverStyle())
-        .help("More actions")
-        .accessibilityLabel("More actions")
+        .help(AppLocalization.string("More actions", locale: locale))
+        .accessibilityLabel(AppLocalization.string("More actions", locale: locale))
     }
 
     private func presentSettings(tab: String = "General") {
@@ -142,6 +178,7 @@ struct CompactPopoverView: View {
 private struct CompactPopoverHeader<MoreContent: View>: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    let locale: Locale
     let isRefreshing: Bool
     let refresh: () -> Void
     let addAccount: () -> Void
@@ -177,8 +214,8 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
             .buttonStyle(.plain)
             .modifier(CompactHeaderHoverStyle())
             .disabled(isRefreshing)
-            .help("Refresh usage")
-            .accessibilityLabel("Refresh usage")
+            .help(AppLocalization.string("Refresh usage", locale: locale))
+            .accessibilityLabel(AppLocalization.string("Refresh usage", locale: locale))
 
             Button(action: addAccount) {
                 Image(systemName: "plus")
@@ -189,8 +226,8 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
             }
             .buttonStyle(.plain)
             .modifier(CompactHeaderHoverStyle())
-            .help("Add account")
-            .accessibilityLabel("Add account")
+            .help(AppLocalization.string("Add account", locale: locale))
+            .accessibilityLabel(AppLocalization.string("Add account", locale: locale))
 
             Button(action: toggleAppearance) {
                 Image(systemName: isDarkAppearance ? "moon.fill" : "sun.max.fill")
@@ -201,8 +238,8 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
             }
             .buttonStyle(.plain)
             .modifier(CompactHeaderHoverStyle())
-            .help("Switch to \(isDarkAppearance ? "Light" : "Dark") appearance")
-            .accessibilityLabel("Switch to \(isDarkAppearance ? "light" : "dark") appearance")
+            .help(AppLocalization.string(isDarkAppearance ? "Switch to Light appearance" : "Switch to Dark appearance", locale: locale))
+            .accessibilityLabel(AppLocalization.string(isDarkAppearance ? "Switch to Light appearance" : "Switch to Dark appearance", locale: locale))
 
             more
         }
@@ -262,6 +299,7 @@ private struct CompactHeaderHoverStyle: ViewModifier {
 
 private struct CompactProviderSection: View {
     @Environment(UsageStore.self) private var store
+    @Environment(\.locale) private var locale
     let provider: Provider
     let showsSeparator: Bool
     let colorScheme: ColorScheme
@@ -330,7 +368,7 @@ private struct CompactProviderSection: View {
             if !rows.contains(where: \.selected) {
                 rows.insert(makeRow(
                     id: "codex-live",
-                    name: snapshot?.account ?? String(localized: "Current session"),
+                    name: snapshot?.account ?? AppLocalization.string("Current session", locale: locale),
                     selected: true,
                     selectedAction: { Task { await store.refresh(provider: .codex) } }
                 ), at: 0)
@@ -352,7 +390,7 @@ private struct CompactProviderSection: View {
             if !rows.contains(where: \.selected) {
                 rows.insert(makeRow(
                     id: "antigravity-live",
-                    name: snapshot?.account ?? String(localized: "Antigravity CLI/App sign-in"),
+                    name: snapshot?.account ?? AppLocalization.string("Antigravity CLI/App sign-in", locale: locale),
                     selected: true,
                     selectedAction: { Task { await store.refresh(provider: .antigravity) } }
                 ), at: 0)
@@ -367,7 +405,7 @@ private struct CompactProviderSection: View {
     private var defaultRow: CompactAccountRowModel {
         makeRow(
             id: "\(provider.rawValue)-current",
-            name: snapshot?.account ?? String(localized: "Current session"),
+            name: snapshot?.account ?? AppLocalization.string("Current session", locale: locale),
             selected: true,
             selectedAction: { Task { await store.refresh(provider: provider) } }
         )
@@ -408,6 +446,7 @@ private struct CompactAccountRowModel: Identifiable {
 
 private struct CompactAccountRow: View {
     @AppStorage("showPopoverResetTimes") private var showResetTimes = false
+    @Environment(\.locale) private var locale
     @State private var isHovered = false
     let row: CompactAccountRowModel
     let provider: Provider
@@ -499,13 +538,13 @@ private struct CompactAccountRow: View {
         .onHover { isHovered = $0 }
         .help(detailTooltip)
         .accessibilityLabel(detailTooltip)
-        .accessibilityHint("Activate this account or refresh its usage")
+        .accessibilityHint(AppLocalization.string("Activate this account or refresh its usage", locale: locale))
         .accessibilityAddTraits(row.selected ? .isSelected : [])
     }
 
     private var usageSummary: String {
-        guard row.selected else { return String(localized: "Saved account · select to switch") }
-        if status == .authenticationRequired { return String(localized: "Sign-in expired") }
+        guard row.selected else { return AppLocalization.string("Saved account · select to switch", locale: locale) }
+        if status == .authenticationRequired { return AppLocalization.string("Sign-in expired", locale: locale) }
 
         if let fiveHour, fiveHour.validUtilization == 100 {
             return limitReachedSummary(label: "5h", window: fiveHour)
@@ -519,45 +558,52 @@ private struct CompactAccountRow: View {
             usageText(label: "Week", window: weekly)
         ].compactMap { $0 }
         if !parts.isEmpty { return parts.joined(separator: " · ") }
-        if status == .rateLimited { return String(localized: "Rate limited · Reset unavailable") }
-        return String(localized: "Usage unavailable")
+        if status == .rateLimited { return AppLocalization.string("Rate limited · Reset unavailable", locale: locale) }
+        return AppLocalization.string("Usage unavailable", locale: locale)
     }
 
     private var resetSummary: String? {
         guard row.selected else { return nil }
-        let quotaResets: [(String, UsageWindow?)] = [("5h", fiveHour), ("Week", weekly)]
+        let quotaResets: [(String, UsageWindow?)] = [
+            (AppLocalization.string("5h", locale: locale), fiveHour),
+            (AppLocalization.string("Week", locale: locale), weekly)
+        ]
         let parts = quotaResets.compactMap { label, window -> String? in
             guard let window else { return nil }
-            let reset = window.resetsAt.map(resetTimeLabel) ?? String(localized: "Unavailable")
+            let reset = window.resetsAt.map(resetTimeLabel) ?? AppLocalization.string("Unavailable", locale: locale)
             return "\(label) \(reset)"
         }
         guard !parts.isEmpty else { return nil }
-        return "\(String(localized: "Reset")) \(parts.joined(separator: " · "))"
+        return "\(AppLocalization.string("Reset", locale: locale)) \(parts.joined(separator: " · "))"
     }
 
     private var detailTooltip: String {
-        let state = row.selected ? status.title : String(localized: "Saved")
+        let state = row.selected ? status.title : AppLocalization.string("Saved", locale: locale)
         var lines = ["\(providerLabel) · \(state)", row.name]
         if let plan = row.plan, !plan.isEmpty {
-            lines.append(String(format: String(localized: "Plan: %@"), plan))
+            lines.append(String(
+                format: AppLocalization.string("Plan: %@", locale: locale),
+                locale: locale,
+                arguments: [plan]
+            ))
         }
 
         if row.selected {
             if windows.isEmpty {
-                lines.append(String(localized: "Usage unavailable"))
+                lines.append(AppLocalization.string("Usage unavailable", locale: locale))
             } else {
                 for window in windows {
                     let used = window.validUtilization.map {
-                        "\($0.formatted(.number.precision(.fractionLength(0...2))))% used"
-                    } ?? String(localized: "Usage unavailable")
+                        String(format: AppLocalization.string("%@%% used", locale: locale), locale: locale, arguments: [$0.formatted(.number.precision(.fractionLength(0...2)).locale(locale))])
+                    } ?? AppLocalization.string("Usage unavailable", locale: locale)
                     lines.append("\(window.label) · \(used)")
-                    let reset = window.resetsAt.map(resetTimeLabel) ?? String(localized: "Reset unavailable")
-                    lines.append("\(String(localized: "Reset")) \(reset)")
+                    let reset = window.resetsAt.map(resetTimeLabel) ?? AppLocalization.string("Reset unavailable", locale: locale)
+                    lines.append("\(AppLocalization.string("Reset", locale: locale)) \(reset)")
                     if let detail = window.detail, !detail.isEmpty { lines.append(detail) }
                 }
             }
         } else {
-            lines.append(String(localized: "Usage is shown for the active account only."))
+            lines.append(AppLocalization.string("Usage is shown for the active account only.", locale: locale))
         }
 
         return lines.joined(separator: "\n")
@@ -565,32 +611,37 @@ private struct CompactAccountRow: View {
 
     private func resetTimeLabel(_ date: Date) -> String {
         if Calendar.autoupdatingCurrent.isDateInToday(date) {
-            return "\(String(localized: "Today")) · \(date.formatted(.dateTime.hour().minute()))"
+            return "\(AppLocalization.string("Today", locale: locale)) · \(date.formatted(.dateTime.locale(locale).hour().minute()))"
         }
-        return date.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated).hour().minute())
+        return date.formatted(.dateTime.locale(locale).weekday(.abbreviated).day().month(.abbreviated).hour().minute())
     }
 
     private func usageText(label: String, window: UsageWindow?) -> String? {
         guard let window, let percentage = window.validUtilization else { return nil }
-        let value = percentage.formatted(.number.precision(.fractionLength(0)))
-        if label == "5h" { return String(format: String(localized: "5h %@%% used"), value) }
-        return String(format: String(localized: "Week %@%% used"), value)
+        let value = percentage.formatted(.number.precision(.fractionLength(0)).locale(locale))
+        if label == "5h" {
+            return String(format: AppLocalization.string("5h %@%% used", locale: locale), locale: locale, arguments: [value])
+        }
+        return String(format: AppLocalization.string("Week %@%% used", locale: locale), locale: locale, arguments: [value])
     }
 
     private func limitReachedSummary(label: String, window: UsageWindow) -> String {
         guard let date = window.resetsAt else {
-            if label == "5h" { return String(localized: "5h limit reached · Reset unavailable") }
-            return String(localized: "Week limit reached · Reset unavailable")
+            if label == "5h" { return AppLocalization.string("5h limit reached · Reset unavailable", locale: locale) }
+            return AppLocalization.string("Week limit reached · Reset unavailable", locale: locale)
         }
-        let reset = date.formatted(date: .omitted, time: .shortened)
-        if label == "5h" { return String(format: String(localized: "5h limit reached · resets %@"), reset) }
-        return String(format: String(localized: "Week limit reached · resets %@"), reset)
+        let reset = date.formatted(.dateTime.locale(locale).hour().minute())
+        if label == "5h" {
+            return String(format: AppLocalization.string("5h limit reached · resets %@", locale: locale), locale: locale, arguments: [reset])
+        }
+        return String(format: AppLocalization.string("Week limit reached · resets %@", locale: locale), locale: locale, arguments: [reset])
     }
 }
 
 private struct CompactPopoverFooter: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.locale) private var locale
     let lastRefresh: Date?
     let website: () -> Void
     let settings: () -> Void
@@ -602,12 +653,24 @@ private struct CompactPopoverFooter: View {
                 .fill(PopoverColorTokens.separator)
                 .frame(height: 0.5)
             HStack(spacing: 4) {
-                Text(lastRefresh.map { String(format: String(localized: "Updated %@"), $0.formatted(date: .omitted, time: .shortened)) } ?? String(localized: "Not refreshed"))
+                Text(lastRefresh.map {
+                    String(
+                        format: AppLocalization.string("Updated %@", locale: locale),
+                        locale: locale,
+                        arguments: [$0.formatted(Date.FormatStyle(date: .omitted, time: .shortened, locale: locale))]
+                    )
+                } ?? AppLocalization.string("Not refreshed", locale: locale))
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: colorSchemeContrast == .increased))
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .help(lastRefresh.map { "Last updated \($0.formatted(date: .abbreviated, time: .shortened))" } ?? "Usage has not been refreshed")
+                    .help(lastRefresh.map {
+                        String(
+                            format: AppLocalization.string("Last updated %@", locale: locale),
+                            locale: locale,
+                            arguments: [$0.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale))]
+                        )
+                    } ?? AppLocalization.string("Usage has not been refreshed", locale: locale))
 
                 footerButton(symbol: "globe", label: "Website", action: website)
                 footerButton(symbol: "gearshape", label: "Settings", action: settings)
@@ -628,7 +691,7 @@ private struct CompactPopoverFooter: View {
         }
         .modifier(CompactHeaderHoverStyle())
         .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: colorSchemeContrast == .increased))
-        .help(label)
-        .accessibilityLabel(label)
+        .help(AppLocalization.string(label, locale: locale))
+        .accessibilityLabel(AppLocalization.string(label, locale: locale))
     }
 }

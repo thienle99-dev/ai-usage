@@ -13,6 +13,15 @@
 "All Providers" = "Tất cả nhà cung cấp";
 "No providers shown" = "Không có nhà cung cấp nào đang hiển thị";
 "More actions" = "Tác vụ khác";
+"Switch to Light appearance" = "Chuyển sang giao diện sáng";
+"Switch to Dark appearance" = "Chuyển sang giao diện tối";
+"Activate this account or refresh its usage" = "Kích hoạt tài khoản này hoặc cập nhật mức sử dụng";
+"Connected" = "Đã kết nối";
+"Authentication required" = "Cần xác thực";
+"Rate limited" = "Đã chạm giới hạn";
+"Data unavailable" = "Không có dữ liệu";
+"Error" = "Lỗi";
+"%@%% used" = "%@%% đã dùng";
 "Refresh usage" = "Làm mới mức sử dụng";
 "Add account" = "Thêm tài khoản";
 "Current session" = "Phiên hiện tại";
@@ -23,6 +32,8 @@
 "Saved" = "Đã lưu";
 "Selected" = "Đã chọn";
 "Updated %@" = "Cập nhật lúc %@";
+"Last updated %@" = "Cập nhật lần cuối %@";
+"Usage has not been refreshed" = "Chưa cập nhật mức sử dụng";
 "Not refreshed" = "Chưa cập nhật";
 "Website" = "Trang web";
 "Quit" = "Thoát";

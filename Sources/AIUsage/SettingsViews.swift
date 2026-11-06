@@ -1099,7 +1099,7 @@ struct AppearanceSettingsView: View {
     var body: some View {
         SettingsPage(title: "Appearance", subtitle: "Match System Appearance, or choose Light or Dark.") {
             SettingsSection(title: "Appearance") {
-                SettingsRow(title: "Language", description: "Choose the app language.") {
+                SettingsRow(icon: "character.bubble", title: "Language", description: "Choose the app language.") {
                     Picker("Language", selection: store.language) {
                         ForEach(AppLanguage.allCases) { language in
                             Text(LocalizedStringKey(language.title)).tag(language.rawValue)
