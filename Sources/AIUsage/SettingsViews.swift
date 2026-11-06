@@ -1297,9 +1297,8 @@ struct ProvidersSettingsView: View {
     @State private var openCodeCookieHeader = ""
     @State private var openCodeCredentialMessage: String?
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
-    @State private var codexHomeMessage: String?
-    @State private var showingCodexMigrationConfirmation = false
     @State private var antigravityAccountPendingRemoval: AntigravityAccount?
+    @State private var claudeDesktopAccountName = ""
 
     var body: some View {
         SettingsPage(title: "Providers", subtitle: "Accounts, status, and usage sources.") {
@@ -1355,11 +1354,14 @@ struct ProvidersSettingsView: View {
                     providerRow(provider)
                 }
             }
-            SettingsSection(title: "Codex homes") {
-                codexHomesContent
+            SettingsSection(title: "Codex accounts") {
+                codexAccountsContent
             }
             SettingsSection(title: "Antigravity accounts") {
                 antigravityAccountsContent
+            }
+            SettingsSection(title: "Claude Desktop accounts") {
+                claudeDesktopAccountsContent
             }
             SettingsSection(title: "Cursor session") {
                 cursorContent
@@ -1367,27 +1369,6 @@ struct ProvidersSettingsView: View {
             CopilotSessionContent()
             SettingsSection(title: "OpenCode session") {
                 openCodeContent
-            }
-        }
-        .confirmationDialog(
-            "Move current Codex home into AI Usage Monitor?",
-            isPresented: $showingCodexMigrationConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Move home and prepare default login") {
-                do {
-                    try store.startManagingCodexAccounts()
-                    codexHomeMessage = "Home moved. Sign in with `codex login` to add another account to the default home."
-                } catch {
-                    codexHomeMessage = error.localizedDescription
-                }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Source: \(store.codexLiveHomeURL.path)")
-                Text("Managed storage: \(store.codexDefaultHomeSlotURL.deletingLastPathComponent().path)")
-                Text("This moves the complete home and prepares an empty default home for normal Codex sign-in. Close Codex, terminals, and IDE sessions first.")
             }
         }
         .confirmationDialog(
@@ -1407,6 +1388,12 @@ struct ProvidersSettingsView: View {
             Button("Cancel", role: .cancel) { antigravityAccountPendingRemoval = nil }
         } message: {
             Text("This deletes the saved Antigravity credential from AI Usage Monitor’s Keychain. It does not sign out of Antigravity CLI or app.")
+        }
+        .task {
+            while !Task.isCancelled {
+                store.refreshClaudeDesktopAppState()
+                try? await Task.sleep(for: .seconds(2))
+            }
         }
     }
 
@@ -1502,135 +1489,33 @@ struct ProvidersSettingsView: View {
     }
 
     @ViewBuilder
-    private var codexHomesContent: some View {
-        if !store.codexAccountManagementStarted {
-            Text("Move the account currently used by Codex into app-managed storage. Then sign in to another account normally with Codex CLI; both homes can be switched later.")
-                .font(.system(size: 11))
-                .foregroundStyle(UsageTheme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.vertical, 4)
+    private var codexAccountsContent: some View {
+        Text("Register the current Codex login, stash a durable copy, or activate a saved account. Codex CLI and AI Usage Monitor share the live Codex home.")
+            .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
+        ForEach(store.codexAccounts) { account in
             HStack {
-                Spacer()
-                Button("Start managing accounts…") {
-                    showingCodexMigrationConfirmation = true
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(account.label).font(.system(size: 12, weight: .medium))
+                    Text(account.id == store.codexInUseAccountID ? "In use" : "Saved")
+                        .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(store.codexSwitchInFlight || store.refreshing.contains(.codex))
-            }
-            .padding(.bottom, 4)
-            SettingsRowDivider()
-        }
-        Text("Registered Codex home folders. Making one active moves it into the configured Codex home (CODEX_HOME, or ~/.codex when unset); the current live folder moves back to its slot. Only folders move — credentials are never read or changed here.")
-            .font(.system(size: 11))
-            .foregroundStyle(UsageTheme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.vertical, 4)
-        if store.codexLiveHomeIsUnregistered {
-            HStack(spacing: 8) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(UsageTheme.warning)
-                Text("The live folder doesn't match any registered home. Tell the app where this folder belongs when it's not active, then switching works.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(UsageTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.vertical, 4)
-            HStack {
                 Spacer()
-                Button("Assign home slot…") { assignCodexHomeSlotWithPanel() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(store.codexSwitchInFlight)
-            }
-            .padding(.bottom, 2)
-        }
-        if store.codexHomes.isEmpty {
-            HStack {
-                Text("Only ~/.codex is in use.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(UsageTheme.secondaryText)
-                Spacer()
-                Button("Add folder…") { addCodexHomeWithPanel() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-            }
-            .padding(.vertical, 4)
-        } else {
-            ForEach(Array(store.codexHomes.enumerated()), id: \.element.id) { index, home in
-                if index > 0 { SettingsRowDivider() }
-                HStack(spacing: 10) {
-                    Image(systemName: "folder")
-                        .font(.system(size: 15))
-                        .foregroundStyle(UsageTheme.secondaryText)
-                        .frame(width: 22)
-                        .accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(store.codexHomeDisplayName(home))
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(home.lastSeenAccount == nil && home.lastSeenEmail == nil ? UsageTheme.secondaryText : UsageTheme.primaryText)
-                        Text(home.path)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(UsageTheme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        if store.isCodexSlotEmpty(home) && !store.isCodexHomeActive(home) {
-                            Text(store.isCodexDefaultHomeSlot(home) ? "Ready for Codex sign-in" : "Empty slot")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(UsageTheme.mutedText)
-                        }
-                    }
-                    Spacer(minLength: 6)
-                    if store.isCodexHomeActive(home) {
-                        HStack(spacing: 4) {
-                            Circle().fill(UsageTheme.codex).frame(width: 6, height: 6)
-                            Text("Active")
-                                .font(.system(size: 9.5, weight: .medium))
-                                .foregroundStyle(UsageTheme.secondaryText)
-                        }
-                    } else {
-                        let isEmpty = store.isCodexSlotEmpty(home)
-                        Button(isEmpty
-                            ? (store.isCodexDefaultHomeSlot(home) ? "Use default Codex home" : "Sign in first")
-                            : "Use with Codex CLI") {
-                            Task { await store.switchCodexAccount(to: home) }
-                        }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled((isEmpty && !store.isCodexDefaultHomeSlot(home)) || store.codexSwitchInFlight || store.refreshing.contains(.codex))
-                    }
-                    Button { store.removeCodexHome(home) } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(store.codexSwitchInFlight)
-                    .help("Remove \(store.codexHomeDisplayName(home)) from the registry (files stay on disk)")
-                    .accessibilityLabel("Remove \(store.codexHomeDisplayName(home))")
+                if account.id != store.codexInUseAccountID {
+                    Button("Activate") { store.activateCodexAccount(account.id) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(store.codexAccountActionInFlight || store.refreshing.contains(.codex))
                 }
-                .padding(.vertical, 6)
-                .frame(minHeight: 44)
-            }
-            HStack {
-                Spacer()
-                Button("Add folder…") { addCodexHomeWithPanel() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(store.codexSwitchInFlight)
-            }
-            .padding(.vertical, 2)
+            }.padding(.vertical, 4)
         }
-        if let error = store.codexSwitchError {
-            SettingsErrorText(text: error)
-                .padding(.vertical, 4)
-        }
-        if let message = codexHomeMessage {
-            Text(message)
-                .font(.system(size: 11))
-                .foregroundStyle(UsageTheme.secondaryText)
-                .padding(.vertical, 2)
-        }
+        HStack {
+            Spacer()
+            Button("Register current login") { store.registerCurrentCodexLogin() }
+                .buttonStyle(.bordered).controlSize(.small)
+            Button("Stash active session") { store.stashCodexActiveSession() }
+                .buttonStyle(.bordered).controlSize(.small)
+        }.disabled(store.codexAccountActionInFlight || store.refreshing.contains(.codex))
+        if let error = store.codexAccountError { SettingsErrorText(text: error).padding(.vertical, 4) }
     }
 
     @ViewBuilder
@@ -1705,33 +1590,62 @@ struct ProvidersSettingsView: View {
         .padding(.vertical, 4)
     }
 
-    private func addCodexHomeWithPanel() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Choose a Codex home folder (the folder containing auth.json)."
-        panel.prompt = "Register"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try store.addCodexHome(at: url)
-            codexHomeMessage = nil
-        } catch {
-            codexHomeMessage = error.localizedDescription
-        }
-    }
+    @ViewBuilder
+    private var claudeDesktopAccountsContent: some View {
+        Text("Claude Desktop sessions are moved into a private folder on this Mac. Quit Claude before saving or switching; sessions are never copied.")
+            .font(.system(size: 11))
+            .foregroundStyle(UsageTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.vertical, 4)
 
-    private func assignCodexHomeSlotWithPanel() {
-        let panel = NSSavePanel()
-        panel.canCreateDirectories = true
-        panel.message = "Where does the live Codex folder belong when it is not active? Type a folder name inside one of your account folders. Nothing is moved now."
-        panel.prompt = "Assign slot"
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try store.assignCodexHomeSlot(at: url)
-            codexHomeMessage = nil
-        } catch {
-            codexHomeMessage = error.localizedDescription
+        if store.claudeDesktopAppRunning {
+            HStack {
+                Label("Claude Desktop is open", systemImage: "app.window")
+                    .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+                Spacer()
+                Button("Quit Claude Desktop") { store.quitClaudeDesktop() }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }.padding(.vertical, 4)
+        }
+
+        ForEach(Array(store.claudeDesktopAccounts.enumerated()), id: \.element.id) { index, account in
+            if index > 0 { SettingsRowDivider() }
+            HStack(spacing: 9) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 15)).foregroundStyle(UsageTheme.secondaryText).frame(width: 22)
+                Text(account.label).font(.system(size: 12)).foregroundStyle(UsageTheme.primaryText).lineLimit(1)
+                Spacer(minLength: 6)
+                if account.id == store.claudeDesktopInUseAccountID {
+                    Text("In use").font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+                } else {
+                    Button("Activate") { store.activateClaudeDesktopAccount(account.id) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(store.claudeDesktopAppRunning || store.claudeDesktopAccountActionInFlight)
+                }
+            }.padding(.vertical, 5)
+        }
+
+        HStack {
+            TextField("Account name", text: $claudeDesktopAccountName)
+                .textFieldStyle(.roundedBorder).font(.system(size: 12))
+            Button("Save current session") {
+                store.stashClaudeDesktopSession(label: claudeDesktopAccountName)
+                claudeDesktopAccountName = ""
+            }
+            .buttonStyle(.bordered).controlSize(.small)
+            .disabled(store.claudeDesktopAppRunning || store.claudeDesktopAccountActionInFlight || claudeDesktopAccountName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }.padding(.vertical, 4)
+
+        if !store.claudeDesktopAppRunning {
+            HStack {
+                Spacer()
+                Button("Open Claude Desktop") { store.openClaudeDesktop() }
+                    .buttonStyle(.bordered).controlSize(.small)
+            }.padding(.vertical, 3)
+        }
+
+        if let error = store.claudeDesktopAccountError {
+            SettingsErrorText(text: error).padding(.vertical, 4)
         }
     }
 

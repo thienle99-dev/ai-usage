@@ -660,7 +660,7 @@ private struct ProviderUsageCard: View {
                 ServiceIncidentNotice(incident: incident)
             }
 
-            if provider == .codex, let error = store.codexSwitchError {
+            if provider == .codex, let error = store.codexAccountError {
                 Label(error, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 10.5))
                     .foregroundStyle(UsageTheme.warning)
@@ -711,66 +711,26 @@ private struct ProviderUsageCard: View {
     }
 
     private var codexAccountSwitcher: some View {
-        let isBusy = store.codexSwitchInFlight || store.refreshing.contains(.codex)
-        let canIdentifyActiveHome = store.codexHomes.contains(where: store.isCodexHomeActive)
-        let activeHome = store.codexHomes.first(where: store.isCodexHomeActive)
-        let currentIdentity = activeHome.map(store.codexHomeDisplayName) ?? snapshot?.account ?? "Current Codex account"
-
+        let busy = store.codexAccountActionInFlight || store.refreshing.contains(.codex)
         return Menu {
-            Button {} label: {
-                Label("Current · \(currentIdentity)", systemImage: "checkmark")
-            }
-            .disabled(true)
-            Divider()
-
-            if store.codexHomes.isEmpty {
-                Button("Add account folders in Settings…", action: manageAccounts)
-            } else if !canIdentifyActiveHome {
-                Button("Current home must be registered in Settings") {}.disabled(true)
-                ForEach(store.codexHomes) { home in
-                    Button(store.codexHomeDisplayName(home)) {}.disabled(true)
-                }
-            } else {
-                ForEach(store.codexHomes.filter { !store.isCodexHomeActive($0) }) { home in
-                    Button {
-                        Task { await store.switchCodexAccount(to: home) }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Text(store.codexHomeDisplayName(home))
-                            if store.isCodexSlotEmpty(home) {
-                                Text("Empty").foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .disabled(isBusy || (store.isCodexSlotEmpty(home) && !store.isCodexDefaultHomeSlot(home)))
-                }
-                if store.codexHomes.allSatisfy(store.isCodexHomeActive) {
-                    Button("No other registered accounts") {}.disabled(true)
-                }
+            ForEach(store.codexAccounts) { account in
+                Button {
+                    store.activateCodexAccount(account.id)
+                } label: {
+                    if account.id == store.codexInUseAccountID {
+                        Label("Current · \(account.label)", systemImage: "checkmark")
+                    } else { Text(account.label) }
+                }.disabled(busy || account.id == store.codexInUseAccountID)
             }
             Divider()
-            Button("Manage Accounts…", action: manageAccounts)
+            Button("Register current login") { store.registerCurrentCodexLogin() }.disabled(busy)
+            Button("Stash active session") { store.stashCodexActiveSession() }.disabled(busy)
         } label: {
-            HStack(spacing: 3) {
-                if store.codexSwitchInFlight {
-                    ProgressView().controlSize(.mini)
-                } else {
-                    Image(systemName: "person.crop.circle")
-                }
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(UsageTheme.secondaryText)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 4)
-            .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            Image(systemName: busy ? "person.crop.circle.badge.clock" : "person.crop.circle")
+                .foregroundStyle(UsageTheme.secondaryText).padding(.horizontal, 5)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .disabled(isBusy)
-        .help("Switch Codex account")
-        .accessibilityLabel("Switch Codex account")
-        .accessibilityHint("Choose a registered Codex home or manage accounts in Settings")
+        .menuStyle(.borderlessButton).fixedSize().disabled(busy)
+        .help("Manage Codex accounts").accessibilityLabel("Manage Codex accounts")
     }
 
     private var antigravityAccountSwitcher: some View {

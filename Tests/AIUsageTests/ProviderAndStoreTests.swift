@@ -10,6 +10,28 @@ private struct HTTPFixture: Sendable {
     var shouldFail: Bool = false
 }
 
+private final class LockedAccountFixture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reference: String
+    private var fingerprint: String
+    init(reference: String, fingerprint: String) { self.reference = reference; self.fingerprint = fingerprint }
+    func read() -> (reference: String, fingerprint: String, label: String?) {
+        lock.lock(); defer { lock.unlock() }
+        return (reference, fingerprint, nil)
+    }
+    func set(reference: String, fingerprint: String) {
+        lock.lock(); defer { lock.unlock() }
+        self.reference = reference; self.fingerprint = fingerprint
+    }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Bool
+    init(_ value: Bool) { self.value = value }
+    func getAndClear() -> Bool { lock.lock(); defer { lock.unlock() }; let result = value; value = false; return result }
+}
+
 private actor FixtureHTTPDataLoader: HTTPDataLoading {
     private var fixtures: [HTTPFixture]
     private var requests: [URLRequest] = []
@@ -47,16 +69,7 @@ private actor MutableCodexSource: CodexAppServerDataSource {
     func read() async throws -> Data { data }
 }
 
-private final class ScriptedMtimes: @unchecked Sendable {
-    private var values: [Date?]
-    private var index = 0
-    init(_ values: [Date?]) { self.values = values }
-    func next(_ path: String) -> Date? {
-        defer { index += 1 }
-        guard index < values.count else { return nil }
-        return values[index]
-    }
-}
+
 
 private func makeCodexHomeDir(at url: URL, marker: String) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
@@ -137,6 +150,317 @@ private struct FixtureProvider: UsageProvider {
 }
 
 final class ProviderAndStoreTests: XCTestCase {
+    func testCodexAdapterStageProducesIndependentCopy() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live")
+        let spareRoot = root.appendingPathComponent("spares")
+        try makeCodexHomeDir(at: live, marker: "before")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: spareRoot, indexURL: root.appendingPathComponent("index.json"), identify: { (live.path, "account-a", nil) })
+        let record = try adapter.manager.stashActiveSession()!
+        try Data("after".utf8).write(to: live.appendingPathComponent("marker.txt"))
+        XCTAssertEqual(codexMarker(in: URL(fileURLWithPath: record.sessionReference)), "before")
+    }
+
+    func testCodexAdapterStageThenActivateRoundTripsAndParksOtherLogin() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live")
+        let spareRoot = root.appendingPathComponent("spares")
+        try makeCodexHomeDir(at: live, marker: "account-a")
+        let identity = LockedAccountFixture(reference: live.path, fingerprint: "account-a")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: spareRoot, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, isBusy: { false })
+        let first = try adapter.manager.registerCurrentAccount()
+        _ = try adapter.manager.stashActiveSession()
+        try makeCodexHomeDir(at: live, marker: "account-b")
+        identity.set(reference: live.path, fingerprint: "account-b")
+        let second = try adapter.manager.stashActiveSession()!
+        identity.set(reference: live.path, fingerprint: "account-b")
+        try adapter.manager.activateAccount(first.id)
+        XCTAssertEqual(codexMarker(in: live), "account-a")
+        XCTAssertEqual(codexMarker(in: URL(fileURLWithPath: second.sessionReference)), "account-b")
+    }
+
+    func testCodexAdapterRefusesActivateWhileCodexLoginIsRunning() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live")
+        let spareRoot = root.appendingPathComponent("spares")
+        try makeCodexHomeDir(at: live, marker: "account-a")
+        let identity = LockedAccountFixture(reference: live.path, fingerprint: "account-a")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: spareRoot, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, isBusy: { false })
+        let first = try adapter.manager.registerCurrentAccount()
+        try makeCodexHomeDir(at: live, marker: "account-b")
+        identity.set(reference: live.path, fingerprint: "account-b")
+        _ = try adapter.manager.stashActiveSession()
+
+        let busy = CodexSessionAdapter(liveHomeURL: live, spareRootURL: spareRoot, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, isBusy: { true })
+        XCTAssertThrowsError(try busy.manager.activateAccount(first.id)) { error in
+            XCTAssertEqual(error.localizedDescription, CodexSessionAdapterError.busy.localizedDescription)
+        }
+        XCTAssertEqual(codexMarker(in: live), "account-b")
+    }
+
+    func testCodexAdapterActivateRejectsReferenceWithoutAuthAndPreservesLive() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live")
+        let spareRoot = root.appendingPathComponent("spares")
+        try makeCodexHomeDir(at: live, marker: "live")
+        let identity = LockedAccountFixture(reference: live.path, fingerprint: "account-a")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: spareRoot, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() })
+        let selected = try adapter.manager.registerCurrentAccount()
+        let staged = try adapter.manager.stashActiveSession()!
+        try FileManager.default.removeItem(at: URL(fileURLWithPath: staged.sessionReference).appendingPathComponent("auth.json"))
+        identity.set(reference: live.path, fingerprint: "account-b")
+        XCTAssertThrowsError(try adapter.manager.activateAccount(selected.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+        XCTAssertEqual(codexMarker(in: live), "live")
+    }
+
+    func testCodexAdapterUnknownIdentityRegisterAndStashWriteNothing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live")
+        try makeCodexHomeDir(at: live, marker: "live")
+        let index = root.appendingPathComponent("index.json")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: root.appendingPathComponent("spares"), indexURL: index, identify: { (live.path, "", nil) })
+        XCTAssertThrowsError(try adapter.manager.registerCurrentAccount())
+        XCTAssertThrowsError(try adapter.manager.stashActiveSession())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: index.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("spares").path))
+    }
+
+    func testCodexAdapterSafeToChangeThrowsWhenLiveHomeMissing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("missing")
+        let adapter = CodexSessionAdapter(liveHomeURL: live, spareRootURL: root.appendingPathComponent("spares"), indexURL: root.appendingPathComponent("index.json"), identify: { (live.path, "account-a", nil) })
+        XCTAssertThrowsError(try adapter.manager.activateAccount("none"))
+    }
+
+    func testDurableAccountSessionManagerRegistersAndActivatesIdentifiedAccount() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexURL = root.appendingPathComponent("state.json")
+        let live = LockedAccountFixture(reference: "live-a", fingerprint: "service-id-a")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: indexURL,
+            identify: { live.read() },
+            stage: { source, id in "parked-\(id)-\(source)" },
+            activate: { reference in live.set(reference: reference, fingerprint: reference == "parked-b" ? "service-id-b" : "service-id-a") })
+        let first = try manager.registerCurrentAccount(label: "Personal")
+        XCTAssertEqual(first.identityFingerprint, "service-id-a")
+        XCTAssertEqual(try manager.registerCurrentAccount().id, first.id)
+        let savedIndex = try JSONDecoder().decode(AccountSessionIndex.self, from: Data(contentsOf: indexURL))
+        XCTAssertEqual(savedIndex.inUse[.codex], first.id)
+        XCTAssertNil(savedIndex.journal)
+    }
+
+    func testAccountSessionRegisterDeduplicatesFingerprintAndStoresDifferentAccounts() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "opaque-ref-a", fingerprint: "fp-a")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() }, stage: { source, id in "parked-\(id)-\(source)" }, activate: { _ in })
+        let first = try manager.registerCurrentAccount()
+        XCTAssertEqual(try manager.registerCurrentAccount().id, first.id)
+        live.set(reference: "opaque-ref-b", fingerprint: "fp-b")
+        XCTAssertNotEqual(try manager.registerCurrentAccount().id, first.id)
+        let data = try Data(contentsOf: root.appendingPathComponent("state.json"))
+        XCTAssertNil(String(data: data, encoding: .utf8)?.range(of: "secret-credential-fixture"))
+        let mode = (try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("state.json").path)[.posixPermissions] as? NSNumber)?.intValue
+        XCTAssertEqual(mode.map { $0 & 0o777 }, 0o600)
+    }
+
+    func testAntigravityMigrationImportsOnlyAccountsWithKeychainCredentials() {
+        let date = Date(timeIntervalSince1970: 100)
+        let accounts = [
+            AntigravityAccount(id: "kept", identity: "user@example.com", addedAt: date),
+            AntigravityAccount(id: "missing", identity: "other@example.com", addedAt: date)
+        ]
+        let (records, activeID) = migrateAntigravityAccounts(accounts, availableCredentialIDs: ["kept"], activeID: "missing")
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records[0].id, "kept")
+        XCTAssertEqual(records[0].tool, .antigravity)
+        XCTAssertEqual(records[0].sessionReference, "kept")
+        XCTAssertEqual(records[0].label, "user@example.com")
+        XCTAssertNil(activeID)
+    }
+
+    func testClaudeDesktopAdapterMovesSessionsWithoutCopyingAndSwitchesFromSignedOut() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("Claude", isDirectory: true)
+        let parked = root.appendingPathComponent("parked", isDirectory: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: live.appendingPathComponent("Local Storage"), withIntermediateDirectories: true)
+        try Data("untouched".utf8).write(to: live.appendingPathComponent("Preferences"))
+        func writeCookie(_ value: Data) throws {
+            let url = live.appendingPathComponent("Cookies")
+            var db: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
+            defer { sqlite3_close(db) }
+            XCTAssertEqual(sqlite3_exec(db, "CREATE TABLE meta (key TEXT, value TEXT); INSERT INTO meta VALUES ('version', '24'); CREATE TABLE cookies (host_key TEXT, name TEXT, path TEXT, encrypted_value BLOB)", nil, nil, nil), SQLITE_OK)
+            var statement: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(db, "INSERT INTO cookies VALUES (?, ?, ?, ?)", -1, &statement, nil), SQLITE_OK)
+            defer { sqlite3_finalize(statement) }
+            sqlite3_bind_text(statement, 1, ".claude.ai", -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            sqlite3_bind_text(statement, 2, "sessionKey", -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            sqlite3_bind_text(statement, 3, "/", -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            _ = value.withUnsafeBytes { bytes in
+                sqlite3_bind_blob(statement, 4, bytes.baseAddress, Int32(bytes.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+            XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE)
+        }
+        try writeCookie(Data("v10-session-a".utf8))
+        let originalInode = try FileManager.default.attributesOfItem(atPath: live.appendingPathComponent("Cookies").path)[.systemFileNumber] as? NSNumber
+        let adapter = ClaudeDesktopSessionAdapter(liveDataURL: live, parkedRootURL: parked, indexURL: indexURL, isAppRunning: { false })
+
+        let work = try XCTUnwrap(adapter.manager.stashActiveSession(label: "Work"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("Cookies").path))
+        let workPark = try XCTUnwrap(try adapter.manager.currentIndex().accounts.first(where: { $0.id == work.id })).sessionReference
+        XCTAssertTrue(FileManager.default.fileExists(atPath: URL(fileURLWithPath: workPark).appendingPathComponent("Cookies").path))
+        XCTAssertEqual(try String(contentsOf: live.appendingPathComponent("Preferences"), encoding: .utf8), "untouched")
+
+        try writeCookie(Data("v10-session-home".utf8))
+        let home = try XCTUnwrap(adapter.manager.stashActiveSession(label: "Home"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("Cookies").path))
+        try adapter.manager.activateAccount(work.id)
+        let restoredInode = try FileManager.default.attributesOfItem(atPath: live.appendingPathComponent("Cookies").path)[.systemFileNumber] as? NSNumber
+        XCTAssertEqual(originalInode, restoredInode, "the session database is moved back, never copied")
+        try adapter.manager.activateAccount(home.id)
+        try adapter.manager.activateAccount(work.id)
+        XCTAssertEqual(try String(contentsOf: live.appendingPathComponent("Preferences"), encoding: .utf8), "untouched")
+        let index = try adapter.manager.currentIndex()
+        let homePark = try XCTUnwrap(index.accounts.first(where: { $0.id == home.id })).sessionReference
+        XCTAssertTrue(FileManager.default.fileExists(atPath: URL(fileURLWithPath: homePark).appendingPathComponent("Cookies").path))
+        XCTAssertEqual(index.inUse[.claudeDesktop], work.id)
+        XCTAssertNil(index.journal)
+    }
+
+    func testClaudeDesktopAdapterRefusesToMoveWhileAppIsRunning() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("Claude", isDirectory: true)
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+        let adapter = ClaudeDesktopSessionAdapter(liveDataURL: live, parkedRootURL: root.appendingPathComponent("parked"),
+            indexURL: root.appendingPathComponent("index.json"), isAppRunning: { true })
+        XCTAssertThrowsError(try adapter.manager.stashActiveSession()) { error in
+            XCTAssertEqual(error as? ClaudeDesktopSessionError, .appRunning)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("parked").path))
+    }
+
+    func testClaudeDesktopRecoveryRestoresPreviousSessionAndKeepsTargetParked() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("Claude", isDirectory: true)
+        let parked = root.appendingPathComponent("parked", isDirectory: true)
+        let previous = parked.appendingPathComponent("parked-previous", isDirectory: true)
+        let target = parked.appendingPathComponent("parked-target", isDirectory: true)
+        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: previous, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        try Data("previous-session".utf8).write(to: previous.appendingPathComponent("Cookies"))
+        try Data("target-session".utf8).write(to: target.appendingPathComponent("Cookies"))
+        let journal = AccountSessionJournal(operation: .activate, tool: .claudeDesktop, accountID: "target",
+            previousID: "previous", previousFingerprint: "previous-fingerprint", targetFingerprint: "target-fingerprint",
+            stagedReference: nil, startedAt: .now)
+
+        try ClaudeDesktopSessionAdapter.recover(journal: journal, live: live, parkedRoot: parked, fileManager: .default)
+
+        XCTAssertEqual(try String(contentsOf: live.appendingPathComponent("Cookies"), encoding: .utf8), "previous-session")
+        XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("Cookies"), encoding: .utf8), "target-session")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: previous.appendingPathComponent("Cookies").path))
+    }
+
+    func testAccountSessionStashAndActivateRoundTripAndClearJournal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "ref-a", fingerprint: "fp-a")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() },
+            stage: { source, id in "spare-\(id)-\(source)" },
+            activate: { reference in
+                let fp = reference == "ref-a" ? "fp-a" : "fp-b"
+                live.set(reference: reference, fingerprint: fp)
+            })
+        let first = try manager.registerCurrentAccount()
+        live.set(reference: "ref-b", fingerprint: "fp-b")
+        let second = try manager.stashActiveSession()!
+        XCTAssertNotEqual(first.id, second.id)
+        try manager.activateAccount(first.id)
+        XCTAssertEqual(live.read().fingerprint, "fp-a")
+        let index = try JSONDecoder().decode(AccountSessionIndex.self, from: Data(contentsOf: root.appendingPathComponent("state.json")))
+        XCTAssertNil(index.journal)
+        XCTAssertEqual(index.inUse[.codex], first.id)
+    }
+
+    func testAccountSessionUnidentifiedDoesNotRecordOrStage() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("state.json"),
+            identify: { ("opaque", "", nil) }, stage: { _, _ in XCTFail("unidentified account must not stage"); return "spare" }, activate: { _ in })
+        XCTAssertThrowsError(try manager.registerCurrentAccount())
+        XCTAssertThrowsError(try manager.stashActiveSession())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("state.json").path))
+    }
+
+    func testAccountSessionRecoversAfterStageAndActivateFailuresWithoutLosingRecords() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexURL = root.appendingPathComponent("state.json")
+        let live = LockedAccountFixture(reference: "ref-a", fingerprint: "fp-a")
+        let shouldFailStage = LockedFlag(true)
+        let shouldFailActivate = LockedFlag(true)
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: indexURL,
+            identify: { live.read() },
+            stage: { source, id in
+                if shouldFailStage.getAndClear() { throw AccountSessionError.lockFailed }
+                return "spare-\(id)-\(source)"
+            }, activate: { reference in
+                live.set(reference: reference, fingerprint: reference == "ref-a" ? "fp-a" : "fp-b")
+                if shouldFailActivate.getAndClear() { throw AccountSessionError.recoveryRequired("injected activation interruption") }
+            })
+        let first = try manager.registerCurrentAccount()
+        XCTAssertThrowsError(try manager.stashActiveSession())
+        let afterStageFailure = try JSONDecoder().decode(AccountSessionIndex.self, from: Data(contentsOf: indexURL))
+        XCTAssertEqual(afterStageFailure.accounts.map(\.id), [first.id])
+        XCTAssertNotNil(afterStageFailure.journal)
+        // Next operation resolves the interrupted stash from the still-live identity.
+        XCTAssertEqual(try manager.registerCurrentAccount().id, first.id)
+        live.set(reference: "ref-b", fingerprint: "fp-b")
+        let second = try manager.registerCurrentAccount()
+        XCTAssertThrowsError(try manager.activateAccount(first.id))
+        // Adapter changed the live identity before reporting interruption; settle commits
+        // the target identity and retains both account records.
+        XCTAssertEqual(try manager.registerCurrentAccount().id, first.id)
+        XCTAssertEqual(live.read().fingerprint, "fp-a")
+        XCTAssertEqual(second.identityFingerprint, "fp-b")
+        let final = try JSONDecoder().decode(AccountSessionIndex.self, from: Data(contentsOf: indexURL))
+        XCTAssertNil(final.journal)
+        XCTAssertEqual(Set(final.accounts.map(\.id)), Set([first.id, second.id]))
+    }
+
+    func testAccountSessionLockContentionFailsClosed() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("state.json")
+        let lockFD = open(indexURL.appendingPathExtension("lock").path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        XCTAssertGreaterThanOrEqual(lockFD, 0)
+        defer { _ = flock(lockFD, LOCK_UN); close(lockFD) }
+        XCTAssertEqual(flock(lockFD, LOCK_EX | LOCK_NB), 0)
+        let live = LockedAccountFixture(reference: "ref", fingerprint: "fp")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: indexURL,
+            identify: { live.read() }, stage: { _, _ in "spare" }, activate: { _ in })
+        XCTAssertThrowsError(try manager.registerCurrentAccount()) { error in
+            XCTAssertEqual(error as? AccountSessionError, .lockFailed)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: indexURL.path))
+    }
+
     func testAutoStartPolicyOnlyStartsForFreshlyResetSupportedWindows() {
         let now = Date.now
         func snapshot(_ provider: Provider, label: String, utilization: Double, reset: Date?) -> UsageSnapshot {
@@ -641,6 +965,21 @@ final class ProviderAndStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapshotCacheIsWrittenOwnerReadableOnly() async throws {
+        let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("snapshots.json")
+        defer { try? FileManager.default.removeItem(at: cache.deletingLastPathComponent()) }
+        let store = UsageStore(
+            providers: [FixtureProvider(provider: .codex, failure: nil, delay: .zero, counter: FetchCounter())],
+            defaults: isolatedDefaults(),
+            cacheURL: cache,
+            startImmediately: false
+        )
+        await store.refresh()
+        let attributes = try FileManager.default.attributesOfItem(atPath: cache.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    }
+
+    @MainActor
     func testRefreshIsSingleFlightPerProvider() async {
         let counter = FetchCounter()
         let provider = FixtureProvider(provider: .codex, failure: nil, delay: .milliseconds(80), counter: counter)
@@ -802,348 +1141,133 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertNil(store.snapshots[.codex]?.error)
     }
 
-    @MainActor
-    func testCodexAuthChangeDetectionBaselinesSettlesAndFires() async {
-        let base = Date(timeIntervalSince1970: 1_800_000_000)
-        let script = ScriptedMtimes([
-            base, base,
-            base.addingTimeInterval(100), base.addingTimeInterval(100), base.addingTimeInterval(100),
-            nil, nil,
-            base.addingTimeInterval(200),
-        ])
-        let store = UsageStore(
-            providers: [],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            fileModificationDate: { [script] path in script.next(path) }
-        )
-        XCTAssertFalse(store.codexAuthDidChange(now: base))
-        XCTAssertFalse(store.codexAuthDidChange(now: base))
-        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(101)))
-        XCTAssertTrue(store.codexAuthDidChange(now: base.addingTimeInterval(110)))
-        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(120)))
-        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(130)))
-        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(140)))
-        XCTAssertFalse(store.codexAuthDidChange(now: base.addingTimeInterval(200)))
+    func testCodexMigrationImportsValidHomesAndActiveWithoutChangingFolders() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = [root.appendingPathComponent("account-a"), root.appendingPathComponent("account-b")]
+        for (index, path) in paths.enumerated() {
+            try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
+            try Data("auth-marker-\(index)".utf8).write(to: path.appendingPathComponent("auth.json"))
+            try Data("other-\(index)".utf8).write(to: path.appendingPathComponent("other.txt"))
+        }
+        let before = try paths.map { try Data(contentsOf: $0.appendingPathComponent("auth.json")) }
+        let homes = [CodexHome(path: paths[0].path, lastSeenAccountID: "id-a", lastSeenEmail: "a@example.com"),
+                     CodexHome(path: paths[1].path, lastSeenAccountID: "id-b", lastSeenAccount: "B")]
+        let result = migrateCodexHomes(homes, activeHomePath: paths[1].path)
+        XCTAssertEqual(result.records.count, 2)
+        XCTAssertEqual(result.records.map(\.sessionReference), paths.map(\.path))
+        XCTAssertEqual(result.records.map(\.label), ["a@example.com", "B"])
+        XCTAssertEqual(result.activeAccountID, result.records[1].id)
+        XCTAssertTrue(result.skipped.isEmpty)
+        XCTAssertEqual(try paths.map { try Data(contentsOf: $0.appendingPathComponent("auth.json")) }, before)
+        XCTAssertTrue(paths.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
     }
 
-    @MainActor
-    func testCodexHomeRegistryAddAssignRemoveAndPersist() throws {
+    func testCodexMigrationSecondRunReturnsFalseWithoutDuplicates() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "live")
-        try makeCodexHomeDir(at: slotB, marker: "b")
-        let defaults = isolatedDefaults()
-        let liveAuth = live.appendingPathComponent("auth.json")
-        func makeStore() -> UsageStore {
-            UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAuthFileURL: liveAuth)
-        }
-        let store = makeStore()
-        XCTAssertThrowsError(try store.addCodexHome(at: live)) {
-            XCTAssertEqual($0 as? CodexHomeError, .isLiveHome)
-        }
-        let emptyDir = root.appendingPathComponent("empty", isDirectory: true)
-        try FileManager.default.createDirectory(at: emptyDir, withIntermediateDirectories: true)
-        XCTAssertThrowsError(try store.addCodexHome(at: emptyDir)) {
-            XCTAssertEqual($0 as? CodexHomeError, .missingAuthFile)
-        }
-        XCTAssertThrowsError(try store.addCodexHome(at: liveAuth)) {
-            XCTAssertEqual($0 as? CodexHomeError, .notDirectory)
-        }
-        try store.addCodexHome(at: slotB)
-        XCTAssertThrowsError(try store.addCodexHome(at: slotB)) {
-            XCTAssertEqual($0 as? CodexHomeError, .duplicate)
-        }
-        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
-        try store.assignCodexHomeSlot(at: slotA)
-        XCTAssertThrowsError(try store.assignCodexHomeSlot(at: slotA)) {
-            XCTAssertEqual($0 as? CodexHomeError, .duplicate)
-        }
-        let takenDir = root.appendingPathComponent("taken", isDirectory: true)
-        try FileManager.default.createDirectory(at: takenDir, withIntermediateDirectories: true)
-        do {
-            try store.assignCodexHomeSlot(at: takenDir)
-            XCTFail("Expected occupied slot")
-        } catch CodexHomeError.occupiedSlot { } catch {
-            XCTFail("Wrong error: \(error)")
-        }
-        XCTAssertEqual(store.codexHomes.count, 2)
-        store.activeCodexHomePath = store.codexHomes.first?.path
-        let second = makeStore()
-        XCTAssertEqual(second.codexHomes, store.codexHomes)
-        XCTAssertEqual(second.activeCodexHomePath, store.activeCodexHomePath)
-        if let home = second.codexHomes.first {
-            second.removeCodexHome(home)
-        }
-        XCTAssertNil(second.activeCodexHomePath)
-        XCTAssertEqual(makeStore().codexHomes.count, 1)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: indexURL, identify: { ("", "", nil) }, stage: { _, _ in "" }, activate: { _ in })
+        let record = ManagedAccountRecord(id: "id", label: "A", tool: .codex, sessionReference: "/tmp/home", identityFingerprint: "fp", registeredAt: .now)
+        XCTAssertTrue(try manager.importAccountsOnce([record], migrationID: "codex-homes-v1"))
+        let saved = try Data(contentsOf: indexURL)
+        XCTAssertFalse(try manager.importAccountsOnce([record], migrationID: "codex-homes-v1"))
+        XCTAssertEqual(try Data(contentsOf: indexURL), saved)
+        let index = try JSONDecoder().decode(AccountSessionIndex.self, from: saved)
+        XCTAssertEqual(index.accounts.count, 1)
     }
 
-    @MainActor
-    func testCodexLiveIdentityBindsToSingleMissingSlot() async throws {
+    func testCodexMigrationSkipsHomeMissingAuthFile() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "LIVE-A")
-        try makeCodexHomeDir(at: slotB, marker: "B")
-        let store = UsageStore(
-            providers: [CodexProvider(source: FixtureCodexSource(data: codexAccountPayload(email: "a@example.com")))],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json")
-        )
-        try store.addCodexHome(at: slotB)
-        try store.assignCodexHomeSlot(at: slotA)
-        await store.refresh()
-        XCTAssertEqual(store.activeCodexHomePath, store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
-        XCTAssertEqual(store.snapshots[.codex]?.accountID, "a@example.com")
-        XCTAssertFalse(store.codexLiveHomeIsUnregistered)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let home = CodexHome(path: root.path, lastSeenAccountID: "id")
+        let result = migrateCodexHomes([home], activeHomePath: nil)
+        XCTAssertTrue(result.records.isEmpty)
+        XCTAssertEqual(result.skipped, [CodexMigrationSkip(path: root.path, reason: .missingAuthFile)])
     }
 
-    @MainActor
-    func testCodexHomeSwitchMovesFoldersAndUpdatesActive() async throws {
+    func testCodexMigrationSkipsDuplicateFingerprintAsAmbiguous() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "LIVE-A")
-        try makeCodexHomeDir(at: slotB, marker: "B")
-        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
-        let store = UsageStore(
-            providers: [CodexProvider(source: source)],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json")
-        )
-        try store.addCodexHome(at: slotB)
-        try store.assignCodexHomeSlot(at: slotA)
-        await store.refresh()
-        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
-        await source.update(codexAccountPayload(email: "b@example.com"))
-        await store.switchCodexAccount(to: target)
-        XCTAssertNil(store.codexSwitchError)
-        XCTAssertFalse(store.codexSwitchInFlight)
-        XCTAssertEqual(codexMarker(in: live), "B")
-        XCTAssertEqual(codexMarker(in: slotA), "LIVE-A")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: slotB.path))
-        XCTAssertEqual(store.activeCodexHomePath, target.path)
-        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
-    }
-
-    @MainActor
-    func testCodexAccountManagementMigratesAndKeepsHomeSnapshotsSeparate() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-
-        let live = root.appendingPathComponent(".codex", isDirectory: true)
-        let managedRoot = root.appendingPathComponent(".ai-usage/accounts/codex", isDirectory: true)
-        let cacheURL = root.appendingPathComponent("cache/snapshots.json")
-        try makeCodexHomeDir(at: live, marker: "ACCOUNT-A")
-        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
-        let defaults = isolatedDefaults()
-        let store = UsageStore(
-            providers: [CodexProvider(source: source)],
-            defaults: defaults,
-            cacheURL: cacheURL,
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json"),
-            managedCodexAccountsRootURL: managedRoot
-        )
-
-        await store.refresh()
-        try store.startManagingCodexAccounts()
-
-        let defaultSlotPath = store.codexDefaultHomeSlotURL.standardizedFileURL.path
-        let accountA = try XCTUnwrap(store.codexHomes.first(where: { $0.path != defaultSlotPath }))
-        XCTAssertEqual(codexMarker(in: URL(fileURLWithPath: accountA.path)), "ACCOUNT-A")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
-        XCTAssertNil(store.snapshots[.codex])
-        XCTAssertEqual(store.activeCodexHomePath, defaultSlotPath)
-        XCTAssertEqual(store.codexHomeDisplayName(try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))), "Default Codex home")
-
-        await store.switchCodexAccount(to: accountA)
-        XCTAssertNil(store.codexSwitchError)
-        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-A")
-        let emptyDefaultHome = try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))
-        await source.update(Data("not json".utf8))
-        await store.switchCodexAccount(to: emptyDefaultHome)
-        XCTAssertEqual(codexMarker(in: live), nil)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
-        XCTAssertEqual(store.activeCodexHomePath, defaultSlotPath)
-
-        try makeCodexHomeDir(at: live, marker: "ACCOUNT-B")
-        await source.update(codexAccountPayload(email: "b@example.com", window: "secondary", durationMins: 10080))
-        await store.refresh()
-        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
-        XCTAssertEqual(store.codexHomes.first(where: { $0.path == defaultSlotPath })?.lastSeenAccountID, "b@example.com")
-
-        await source.update(codexAccountPayload(email: "a@example.com"))
-        await store.switchCodexAccount(to: accountA)
-        XCTAssertNil(store.codexSwitchError)
-        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-A")
-        XCTAssertEqual(store.snapshots[.codex]?.accountID, "a@example.com")
-
-        let defaultHome = try XCTUnwrap(store.codexHomes.first(where: { $0.path == defaultSlotPath }))
-        await source.update(Data("not json".utf8))
-        await store.switchCodexAccount(to: defaultHome)
-        XCTAssertEqual(codexMarker(in: live), "ACCOUNT-B")
-        XCTAssertEqual(store.snapshots[.codex]?.accountID, "b@example.com")
-        XCTAssertNotNil(store.snapshots[.codex]?.error)
-
-        let restarted = UsageStore(
-            providers: [CodexProvider(source: FixtureCodexSource(data: Data("not json".utf8)))],
-            defaults: defaults,
-            cacheURL: cacheURL,
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json"),
-            managedCodexAccountsRootURL: managedRoot
-        )
-        XCTAssertEqual(restarted.snapshots[.codex]?.accountID, "b@example.com")
-        let restartedAccountA = try XCTUnwrap(restarted.codexHomes.first(where: { $0.path == accountA.path }))
-        await restarted.switchCodexAccount(to: restartedAccountA)
-        XCTAssertEqual(restarted.snapshots[.codex]?.accountID, "a@example.com")
-        XCTAssertEqual(restarted.snapshots[.codex]?.windows.first?.validUtilization, 10)
-        XCTAssertNotNil(restarted.snapshots[.codex]?.error)
-    }
-
-    @MainActor
-    func testCodexAccountManagementRefusesMissingAuthAndOccupiedDefaultSlot() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent(".codex", isDirectory: true)
-        let managedRoot = root.appendingPathComponent(".ai-usage/accounts/codex", isDirectory: true)
-        try FileManager.default.createDirectory(at: live, withIntermediateDirectories: true)
-        let store = UsageStore(
-            providers: [],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json"),
-            managedCodexAccountsRootURL: managedRoot
-        )
-        XCTAssertThrowsError(try store.startManagingCodexAccounts()) { error in
-            XCTAssertEqual(error as? CodexHomeError, .liveHomeMissingAuth)
+        let urls = [root.appendingPathComponent("first"), root.appendingPathComponent("second")]
+        for url in urls {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try Data().write(to: url.appendingPathComponent("auth.json"))
         }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: live.path))
-        XCTAssertTrue(FileManager.default.fileExists(atPath: managedRoot.deletingLastPathComponent().path) == false)
-
-        try Data("{}".utf8).write(to: live.appendingPathComponent("auth.json"))
-        try FileManager.default.createDirectory(at: store.codexDefaultHomeSlotURL, withIntermediateDirectories: true)
-        XCTAssertThrowsError(try store.startManagingCodexAccounts()) { error in
-            XCTAssertEqual(error as? CodexHomeError, .managedSlotOccupied(store.codexDefaultHomeSlotURL.path))
-        }
-        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+        let result = migrateCodexHomes(urls.map { CodexHome(path: $0.path, lastSeenAccountID: "same-id") }, activeHomePath: nil)
+        XCTAssertEqual(result.records.map(\.sessionReference), [urls[0].path])
+        XCTAssertEqual(result.skipped, [CodexMigrationSkip(path: urls[1].path, reason: .ambiguousIdentity)])
     }
 
-    @MainActor
-    func testCodexHomeSwitchRollsBackOnIdentityMismatch() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "LIVE-A")
-        try makeCodexHomeDir(at: slotB, marker: "B")
-        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
-        let store = UsageStore(
-            providers: [CodexProvider(source: source)],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json")
-        )
-        try store.addCodexHome(at: slotB)
-        try store.assignCodexHomeSlot(at: slotA)
-        await store.refresh()
-        if let index = store.codexHomes.firstIndex(where: { $0.path.hasSuffix("slot-b") }) {
-            store.codexHomes[index].lastSeenAccountID = "expected-b@example.com"
-        }
-        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
-        await source.update(codexAccountPayload(email: "c@example.com"))
-        await store.switchCodexAccount(to: target)
-        XCTAssertNotNil(store.codexSwitchError)
-        XCTAssertTrue(store.codexSwitchError?.contains("expected-b@example.com") ?? false)
-        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
-        XCTAssertEqual(codexMarker(in: slotB), "B")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: slotA.path))
-        XCTAssertEqual(store.activeCodexHomePath, store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
-    }
-
-    @MainActor
-    func testCodexHomeSwitchRefusesUnknownLiveOccupiedAndBusy() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "LIVE-A")
-        try makeCodexHomeDir(at: slotB, marker: "B")
-        let source = MutableCodexSource(data: codexAccountPayload(email: "a@example.com"))
-        let store = UsageStore(
-            providers: [CodexProvider(source: source)],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json")
-        )
-        try store.addCodexHome(at: slotB)
-        await store.refresh()
-        // Live identity matches nothing and no slot is missing: unknown live.
-        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
-        await store.switchCodexAccount(to: target)
-        XCTAssertNotNil(store.codexSwitchError)
-        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
-        XCTAssertEqual(codexMarker(in: slotB), "B")
-        // Busy: refresh in flight refuses without moving anything.
-        store.refreshing.insert(.codex)
-        store.codexSwitchError = nil
-        await store.switchCodexAccount(to: target)
-        XCTAssertEqual(store.codexSwitchError, CodexHomeError.busy.localizedDescription)
-        store.refreshing.remove(.codex)
-        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
-    }
-
-    @MainActor
-    func testCodexHomeSwitchRefusesOccupiedSourceSlot() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let live = root.appendingPathComponent("live", isDirectory: true)
-        let slotA = root.appendingPathComponent("slot-a", isDirectory: true)
-        let slotB = root.appendingPathComponent("slot-b", isDirectory: true)
-        try makeCodexHomeDir(at: live, marker: "LIVE-A")
-        try makeCodexHomeDir(at: slotA, marker: "JUNK")
-        try makeCodexHomeDir(at: slotB, marker: "B")
-        let store = UsageStore(
-            providers: [CodexProvider(source: FixtureCodexSource(data: codexAccountPayload(email: "a@example.com")))],
-            defaults: isolatedDefaults(),
-            startImmediately: false,
-            codexAuthFileURL: live.appendingPathComponent("auth.json")
-        )
-        try store.addCodexHome(at: slotA)
-        try store.addCodexHome(at: slotB)
-        await store.refresh()
-        // Simulate a stale belief that slot A's folder is live while its
-        // folder is actually still stashed on disk.
-        store.activeCodexHomePath = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-a") })?.path)
-        let target = try XCTUnwrap(store.codexHomes.first(where: { $0.path.hasSuffix("slot-b") }))
-        await store.switchCodexAccount(to: target)
-        XCTAssertNotNil(store.codexSwitchError)
-        XCTAssertTrue(store.codexSwitchError?.contains("occupied") ?? false)
-        XCTAssertEqual(codexMarker(in: live), "LIVE-A")
-        XCTAssertEqual(codexMarker(in: slotB), "B")
+    func testCodexMigrationDecodesOldIndexWithoutCompletedMigrations() throws {
+        let index = try JSONDecoder().decode(AccountSessionIndex.self, from: Data(#"{"schema":1,"accounts":[],"inUse":[]}"#.utf8))
+        XCTAssertTrue(index.completedMigrations.isEmpty)
     }
 
     private func isolatedDefaults() -> UserDefaults {
         UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!
+    }
+}
+
+extension ProviderAndStoreTests {
+    @MainActor
+    func testCodexWiringStartupMigrationRunsOnceAndPreservesLegacyDefaults() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let legacyHome = root.appendingPathComponent("legacy", isDirectory: true)
+        try makeCodexHomeDir(at: legacyHome, marker: "keep")
+        let defaults = isolatedDefaults()
+        let legacy = CodexHome(path: legacyHome.path, lastSeenAccountID: "legacy-id", lastSeenEmail: "legacy@example.com")
+        defaults.set(try JSONEncoder().encode([legacy]), forKey: "codexHomes")
+        defaults.set(legacyHome.path, forKey: "activeCodexHomePath")
+        let identity = LockedAccountFixture(reference: legacyHome.path, fingerprint: "live-id")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, stage: { _, id in "stage-\(id)" }, activate: { _ in })
+        let store = UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAccountManager: manager)
+        XCTAssertEqual(store.codexAccounts.map(\.identityFingerprint), ["legacy-id"])
+        XCTAssertEqual(store.codexInUseAccountID, store.codexAccounts.first?.id)
+        XCTAssertNotNil(defaults.data(forKey: "codexHomes"))
+        _ = UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAccountManager: manager)
+        XCTAssertEqual(try manager.currentIndex().accounts.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: legacyHome.appendingPathComponent("marker.txt").path))
+    }
+
+    @MainActor
+    func testCodexWiringRegisterStashAndActivateUpdatePublishedAccounts() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let identity = LockedAccountFixture(reference: "live", fingerprint: "account-a")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, stage: { _, id in "staged-\(id)" }, activate: { _ in identity.set(reference: "live", fingerprint: "account-a") })
+        let store = UsageStore(providers: [], defaults: isolatedDefaults(), startImmediately: false, codexAccountManager: manager)
+        store.registerCurrentCodexLogin()
+        XCTAssertEqual(store.codexAccounts.count, 1)
+        let accountA = try XCTUnwrap(store.codexAccounts.first)
+        XCTAssertEqual(store.codexInUseAccountID, accountA.id)
+        store.stashCodexActiveSession()
+        XCTAssertEqual(store.codexAccounts.count, 1)
+        identity.set(reference: "live-b", fingerprint: "account-b")
+        store.registerCurrentCodexLogin()
+        XCTAssertEqual(store.codexAccounts.count, 2)
+        let accountB = try XCTUnwrap(store.codexAccounts.first { $0.identityFingerprint == "account-b" })
+        XCTAssertEqual(store.codexInUseAccountID, accountB.id)
+        store.activateCodexAccount(accountA.id)
+        XCTAssertEqual(store.codexInUseAccountID, accountA.id)
+        XCTAssertNil(store.codexAccountError)
+    }
+
+    @MainActor
+    func testCodexWiringDoesNotMoveFoldersDuringStartupImport() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let home = root.appendingPathComponent("legacy", isDirectory: true)
+        try makeCodexHomeDir(at: home, marker: "unchanged")
+        let defaults = isolatedDefaults()
+        defaults.set(try JSONEncoder().encode([CodexHome(path: home.path, lastSeenAccountID: "a")]), forKey: "codexHomes")
+        let identity = LockedAccountFixture(reference: home.path, fingerprint: "a")
+        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, stage: { _, id in "stage-\(id)" }, activate: { _ in })
+        _ = UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAccountManager: manager)
+        XCTAssertEqual(codexMarker(in: home), "unchanged")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent(".codex.swap-tmp").path))
     }
 }

@@ -700,11 +700,18 @@ enum CursorCredentialVault {
 }
 
 struct LocalCodexAppServerDataSource: CodexAppServerDataSource {
+    private let codexHome: URL?
+
+    init(codexHome: URL? = nil) { self.codexHome = codexHome }
+
     func read() async throws -> Data {
         guard let executable = Self.findCodex() else {
-            throw ProviderFailure.process("Codex CLI was not found. Install Codex or add it to PATH.")
+            throw ProviderFailure.process("Codex CLI not found.")
         }
-        return try await Task.detached(priority: .utility) { try Self.query(executable: executable) }.value
+        let home = codexHome
+        return try await Task.detached(priority: .utility) {
+            try CodexAppServerActivity.withActivity { try Self.query(executable: executable, codexHome: home) }
+        }.value
     }
 
     private static func findCodex() -> URL? {
@@ -719,21 +726,22 @@ struct LocalCodexAppServerDataSource: CodexAppServerDataSource {
         return candidates.compactMap { $0 }.map(URL.init(fileURLWithPath:)).first { FileManager.default.isExecutableFile(atPath: $0.path) }
     }
 
-    private static func query(executable: URL) throws -> Data {
+    private static func query(executable: URL, codexHome: URL? = nil) throws -> Data {
         let deadline = Date().addingTimeInterval(12)
         var lastError: Error = ProviderFailure.process("Could not start Codex app-server.")
         for arguments in [["app-server", "--stdio"], ["app-server"], ["app-server", "--listen", "stdio://"]] {
             guard deadline > .now else { break }
-            do { return try query(executable: executable, arguments: arguments, deadline: deadline) }
+            do { return try query(executable: executable, arguments: arguments, deadline: deadline, codexHome: codexHome) }
             catch { lastError = error }
         }
         throw lastError
     }
 
-    private static func query(executable: URL, arguments: [String], deadline: Date) throws -> Data {
+    private static func query(executable: URL, arguments: [String], deadline: Date, codexHome: URL?) throws -> Data {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
+        if let codexHome { process.environment = ProcessInfo.processInfo.environment.merging(["CODEX_HOME": codexHome.path]) { _, new in new } }
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output

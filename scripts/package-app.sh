@@ -13,6 +13,10 @@ if [ -n "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
     *[!A-Za-z0-9+/=]*) echo "SPARKLE_PUBLIC_ED_KEY must be base64" >&2; exit 2 ;;
   esac
 fi
+if [ "$SIGN_IDENTITY" != "-" ] && [ -z "${SPARKLE_PUBLIC_ED_KEY:-}" ]; then
+  echo "SPARKLE_PUBLIC_ED_KEY is required for signed release builds; without it Sparkle cannot verify updates" >&2
+  exit 2
+fi
 swift build -c release
 DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} xcodebuild \
   -project "$ROOT/AIUsageWidget.xcodeproj" \

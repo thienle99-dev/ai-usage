@@ -217,10 +217,7 @@ struct UsageSnapshot: Codable, Identifiable, Sendable {
     var validWindows: [UsageWindow] { windows.filter { $0.validUtilization != nil } }
 }
 
-/// A registered Codex home folder (a full `~/.codex`-style directory with its
-/// own `auth.json`). The live home is always `~/.codex` (or `$CODEX_HOME`);
-/// switching moves folders between the live location and these stash slots.
-/// Credential contents are never read or written — only folders move.
+/// Legacy Codex account metadata retained only to import old preferences once.
 struct CodexHome: Codable, Identifiable, Sendable, Equatable {
     /// Normalized absolute path of the stash slot. Stable id for ForEach.
     var id: String { path }
@@ -241,61 +238,6 @@ struct CodexHome: Codable, Identifiable, Sendable, Equatable {
     }
 }
 
-enum CodexHomeError: LocalizedError, Sendable, Equatable {
-    case notDirectory
-    case missingAuthFile
-    case duplicate
-    case isLiveHome
-    case crossVolume
-    case unknownLiveHome
-    case busy
-    case managementAlreadyStarted
-    case liveHomeMissing
-    case liveHomeMissingAuth
-    case managedSlotOccupied(String)
-    case emptySlot
-    case occupiedSlot(String)
-    case leftoverSwapFolder(String)
-    case moveFailed(String)
-    case identityMismatch(expected: String, found: String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notDirectory:
-            "Choose a folder. That path is not a directory."
-        case .missingAuthFile:
-            "That folder has no auth.json. Choose a complete Codex home folder."
-        case .duplicate:
-            "That folder is already registered."
-        case .isLiveHome:
-            "That is the live Codex home. Register the folder's original location instead."
-        case .crossVolume:
-            "That folder is on a different disk. Keep all homes on the same disk so switches stay atomic."
-        case .unknownLiveHome:
-            "The live folder doesn't match any registered home. Refresh to identify it, or move a registered home into place manually first."
-        case .busy:
-            "Codex is busy. Try again in a moment."
-        case .managementAlreadyStarted:
-            "Managed Codex accounts are already set up."
-        case .liveHomeMissing:
-            "The active Codex home folder could not be found."
-        case .liveHomeMissingAuth:
-            "The active Codex home has no auth.json. Sign in to Codex before moving it."
-        case .managedSlotOccupied(let path):
-            "The managed account slot is already occupied: \(path)"
-        case .emptySlot:
-            "This Codex home has no account yet. Sign in to it first, then refresh usage."
-        case .occupiedSlot(let path):
-            "That location is occupied at \(path). Pick a name that doesn't exist yet, or move it aside first."
-        case .leftoverSwapFolder(let path):
-            "A leftover swap folder blocks switching: \(path). Inspect it, then move it aside."
-        case .moveFailed(let detail):
-            "Could not move folders: \(detail)"
-        case .identityMismatch(let expected, let found):
-            "Switched folders, but the live account (\(found)) isn't the expected one (\(expected)). Everything was moved back."
-        }
-    }
-}
 
 enum UsageAggregation {
     static func maximum(in snapshots: [Provider: UsageSnapshot], enabled: Set<Provider>) -> Double? {
