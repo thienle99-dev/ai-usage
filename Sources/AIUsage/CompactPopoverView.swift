@@ -6,6 +6,7 @@ struct CompactPopoverView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var providers: [Provider] {
         store.providerOrder.filter {
@@ -18,6 +19,14 @@ struct CompactPopoverView: View {
         case "dark": true
         case "light": false
         default: colorScheme == .dark
+        }
+    }
+
+    private var windowAppearanceName: NSAppearance.Name? {
+        switch store.appearance {
+        case "dark": .darkAqua
+        case "light": .aqua
+        default: nil
         }
     }
 
@@ -55,6 +64,7 @@ struct CompactPopoverView: View {
             }
             .padding(.top, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)
 
             CompactPopoverFooter(
@@ -66,6 +76,19 @@ struct CompactPopoverView: View {
         }
         .padding(.horizontal, 15)
         .frame(width: 350, height: 480, alignment: .topLeading)
+        // A light tint over the system backdrop keeps the native window's
+        // blur and shape while lifting its Light Mode tone slightly.
+        .background {
+            if colorScheme == .light && !reduceTransparency && colorSchemeContrast != .increased {
+                Color.white.opacity(0.05)
+            }
+        }
+        .background {
+            PopoverWindowAppearanceBridge(appearanceName: windowAppearanceName)
+                .frame(width: 1, height: 1)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
         .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
     }
 
@@ -113,8 +136,6 @@ struct CompactPopoverView: View {
 
     private func setAppearance(_ appearance: String) {
         store.appearance = appearance
-        let name: NSAppearance.Name = appearance == "dark" ? .darkAqua : .aqua
-        NSApp.appearance = NSAppearance(named: name)
     }
 }
 
@@ -188,6 +209,41 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
         .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: colorSchemeContrast == .increased))
         .frame(maxWidth: .infinity)
         .padding(.vertical, 5)
+    }
+}
+
+@MainActor
+private struct PopoverWindowAppearanceBridge: NSViewRepresentable {
+    let appearanceName: NSAppearance.Name?
+
+    func makeNSView(context: Context) -> PopoverAppearanceView {
+        let view = PopoverAppearanceView()
+        view.appearanceName = appearanceName
+        return view
+    }
+
+    func updateNSView(_ view: PopoverAppearanceView, context: Context) {
+        view.appearanceName = appearanceName
+    }
+}
+
+@MainActor
+private final class PopoverAppearanceView: NSView {
+    var appearanceName: NSAppearance.Name? {
+        didSet { applyAppearance() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyAppearance()
+    }
+
+    private func applyAppearance() {
+        guard let window else { return }
+        let appearance = appearanceName.flatMap(NSAppearance.init(named:))
+        if window.appearance?.name != appearanceName {
+            window.appearance = appearance
+        }
     }
 }
 
