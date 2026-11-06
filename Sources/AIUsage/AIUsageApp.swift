@@ -1128,6 +1128,8 @@ struct SettingsWindowView: View {
                 switch category {
                 case .appearance:
                     AppearanceSettingsView(store: $store)
+                case .accounts:
+                    AccountsSettingsView()
                 case .providers:
                     ProvidersSettingsView()
                 case .about:

@@ -4,6 +4,7 @@
 "Provider navigation" = "Provider navigation";
 "General" = "General";
 "Menu Bar" = "Menu Bar";
+"Accounts" = "Accounts";
 "Appearance" = "Appearance";
 "Providers" = "Providers";
 "Integrations" = "Integrations";
@@ -52,7 +53,8 @@
 "Choose what appears in the menu bar." = "Choose what appears in the menu bar.";
 "Manage CLI tools and Claude Code features." = "Manage CLI tools and Claude Code features.";
 "Configure your AI usage monitor." = "Configure your AI usage monitor.";
-"Accounts, status, and usage sources." = "Accounts, status, and usage sources.";
+"Manage saved accounts and active sessions." = "Manage saved accounts and active sessions.";
+"Configure providers, status, and usage sources." = "Configure providers, status, and usage sources.";
 "Default Codex home" = "Default Codex home";
 "Start managing accounts…" = "Start managing accounts…";
 "Move current Codex home into AI Usage Monitor?" = "Move current Codex home into AI Usage Monitor?";
@@ -124,6 +126,8 @@
 "Dark" = "Dark";
 "Dashboard theme" = "Dashboard theme";
 "Choose the dashboard color palette." = "Choose the dashboard color palette.";
+"Show reset times in popover" = "Show reset times in popover";
+"Display quota reset times below account usage." = "Display quota reset times below account usage.";
 "Usage thresholds" = "Usage thresholds";
 "Thresholds control warning colors and quota notifications." = "Thresholds control warning colors and quota notifications.";
 "Warning" = "Warning";

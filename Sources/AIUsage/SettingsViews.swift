@@ -6,6 +6,7 @@ import AppKit
 enum SettingsCategory: String, CaseIterable, Identifiable {
     case general = "General"
     case menuBar = "Menu Bar"
+    case accounts = "Accounts"
     case providers = "Providers"
     case integrations = "Integrations"
     case appearance = "Appearance"
@@ -17,6 +18,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .menuBar: "menubar.rectangle"
+        case .accounts: "person.2"
         case .providers: "square.grid.2x2"
         case .integrations: "puzzlepiece"
         case .appearance: "circle.lefthalf.filled"
@@ -28,7 +30,8 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .general: "Configure your AI usage monitor."
         case .menuBar: "Choose what appears in the menu bar."
-        case .providers: "Accounts, status, and usage sources."
+        case .accounts: "Manage saved accounts and active sessions."
+        case .providers: "Configure providers, status, and usage sources."
         case .integrations: "Manage CLI tools and Claude Code features."
         case .appearance: "Match System Appearance, or choose Light or Dark."
         case .about: nil
@@ -337,6 +340,7 @@ struct GeneralSettingsView: View {
     @State private var contextModeError: String?
     @State private var contextModeWorking = false
     @AppStorage("contextWarningsEnabled") private var contextWarningsEnabled = true
+    @AppStorage("showPopoverResetTimes") private var showPopoverResetTimes = false
     @AppStorage("contextWarningThreshold") private var contextWarningThreshold = 80.0
     @AppStorage("promptCacheWarningsEnabled") private var promptCacheWarningsEnabled = true
     @AppStorage(ClaudeProgressHandoff.optInKey) private var claudeProgressHandoffEnabled = false
@@ -376,6 +380,13 @@ struct GeneralSettingsView: View {
                         ForEach(Provider.supported) { provider in Text(provider.displayName).tag(provider) }
                     }
                 }
+                SettingsRowDivider()
+                SettingsToggleRow(
+                    icon: "clock",
+                    title: "Show reset times in popover",
+                    description: "Display quota reset times below account usage.",
+                    isOn: $showPopoverResetTimes
+                )
             }
             }
             if category == .general {
@@ -1289,6 +1300,15 @@ private struct UsageCardLayoutPreview: View {
 // MARK: - Providers
 
 struct ProvidersSettingsView: View {
+    var body: some View { ProviderAndAccountSettingsPage(page: .providers) }
+}
+
+struct AccountsSettingsView: View {
+    var body: some View { ProviderAndAccountSettingsPage(page: .accounts) }
+}
+
+private struct ProviderAndAccountSettingsPage: View {
+    let page: SettingsCategory
     @Environment(UsageStore.self) private var store
     @State private var expandedProviders = Set(Provider.supported.map(\.rawValue))
     @State private var cursorCookieHeader = ""
@@ -1301,7 +1321,8 @@ struct ProvidersSettingsView: View {
     @State private var claudeDesktopAccountName = ""
 
     var body: some View {
-        SettingsPage(title: "Providers", subtitle: "Accounts, status, and usage sources.") {
+        SettingsPage(title: page.rawValue, subtitle: page.subtitle) {
+            if page == .providers {
             SettingsSection(title: "Visible providers") {
                 ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
                     if index > 0 { SettingsRowDivider() }
@@ -1354,6 +1375,14 @@ struct ProvidersSettingsView: View {
                     providerRow(provider)
                 }
             }
+            SettingsSection(title: "Cursor session") {
+                cursorContent
+            }
+            CopilotSessionContent()
+            SettingsSection(title: "OpenCode session") {
+                openCodeContent
+            }
+            } else {
             SettingsSection(title: "Codex accounts") {
                 codexAccountsContent
             }
@@ -1363,12 +1392,6 @@ struct ProvidersSettingsView: View {
             SettingsSection(title: "Claude Desktop accounts") {
                 claudeDesktopAccountsContent
             }
-            SettingsSection(title: "Cursor session") {
-                cursorContent
-            }
-            CopilotSessionContent()
-            SettingsSection(title: "OpenCode session") {
-                openCodeContent
             }
         }
         .confirmationDialog(
@@ -1390,6 +1413,7 @@ struct ProvidersSettingsView: View {
             Text("This deletes the saved Antigravity credential from AI Usage Monitor’s Keychain. It does not sign out of Antigravity CLI or app.")
         }
         .task {
+            guard page == .accounts else { return }
             while !Task.isCancelled {
                 store.refreshClaudeDesktopAppState()
                 try? await Task.sleep(for: .seconds(2))

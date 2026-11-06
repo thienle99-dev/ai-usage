@@ -75,7 +75,7 @@ struct CompactPopoverView: View {
             )
         }
         .padding(.horizontal, 15)
-        .frame(width: 350, height: 480, alignment: .topLeading)
+        .frame(width: 280, height: 480, alignment: .topLeading)
         // A light tint over the system backdrop keeps the native window's
         // blur and shape while lifting its Light Mode tone slightly.
         .background {
@@ -106,7 +106,7 @@ struct CompactPopoverView: View {
             Link("Help", destination: URL(string: "https://github.com/thienle99-dev/ai-usage#readme")!)
         } label: {
             Image(systemName: "ellipsis")
-                .font(.system(size: 14, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())
@@ -153,7 +153,7 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
         HStack(alignment: .center, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "chart.bar.xaxis")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: colorSchemeContrast == .increased))
                     .accessibilityHidden(true)
@@ -167,7 +167,7 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
                     if isRefreshing { ProgressView().controlSize(.mini) }
                     else {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 14, weight: .regular))
+                            .font(.system(size: 12, weight: .regular))
                             .symbolRenderingMode(.hierarchical)
                     }
                 }
@@ -182,7 +182,7 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
 
             Button(action: addAccount) {
                 Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.system(size: 12, weight: .medium))
                     .symbolRenderingMode(.hierarchical)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
@@ -194,7 +194,7 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
 
             Button(action: toggleAppearance) {
                 Image(systemName: isDarkAppearance ? "moon.fill" : "sun.max.fill")
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.system(size: 12, weight: .regular))
                     .symbolRenderingMode(.hierarchical)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
@@ -280,7 +280,7 @@ private struct CompactProviderSection: View {
             }
             HStack(spacing: 6) {
                 Image(systemName: provider.systemImage)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(PopoverColorTokens.providerIcon(provider, colorScheme: colorScheme))
                     .accessibilityHidden(true)
                 Text(providerLabel)
@@ -407,6 +407,7 @@ private struct CompactAccountRowModel: Identifiable {
 }
 
 private struct CompactAccountRow: View {
+    @AppStorage("showPopoverResetTimes") private var showResetTimes = false
     @State private var isHovered = false
     let row: CompactAccountRowModel
     let provider: Provider
@@ -436,7 +437,7 @@ private struct CompactAccountRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 9, weight: .bold))
                         .foregroundStyle(PopoverColorTokens.selectedIndicator(provider, colorScheme: colorScheme))
                         .frame(width: 12)
                         .opacity(row.selected ? 1 : 0)
@@ -470,6 +471,17 @@ private struct CompactAccountRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if showResetTimes, let resetSummary {
+                    HStack(spacing: 5) {
+                        Color.clear.frame(width: 12)
+                        Text(resetSummary)
+                            .font(.system(size: 10, weight: .regular).monospacedDigit())
+                            .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
             }
             .padding(.horizontal, 4)
@@ -509,6 +521,18 @@ private struct CompactAccountRow: View {
         if !parts.isEmpty { return parts.joined(separator: " · ") }
         if status == .rateLimited { return String(localized: "Rate limited · Reset unavailable") }
         return String(localized: "Usage unavailable")
+    }
+
+    private var resetSummary: String? {
+        guard row.selected else { return nil }
+        let quotaResets: [(String, UsageWindow?)] = [("5h", fiveHour), ("Week", weekly)]
+        let parts = quotaResets.compactMap { label, window -> String? in
+            guard let window else { return nil }
+            let reset = window.resetsAt.map(resetTimeLabel) ?? String(localized: "Unavailable")
+            return "\(label) \(reset)"
+        }
+        guard !parts.isEmpty else { return nil }
+        return "\(String(localized: "Reset")) \(parts.joined(separator: " · "))"
     }
 
     private var detailTooltip: String {
@@ -597,7 +621,7 @@ private struct CompactPopoverFooter: View {
     private func footerButton(symbol: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
                 .symbolRenderingMode(.hierarchical)
                 .frame(width: 28, height: 28)
                 .contentShape(Rectangle())

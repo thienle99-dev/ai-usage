@@ -4,6 +4,7 @@
 "Provider navigation" = "Điều hướng nhà cung cấp";
 "General" = "Chung";
 "Menu Bar" = "Thanh menu";
+"Accounts" = "Tài khoản";
 "Appearance" = "Giao diện";
 "Providers" = "Nhà cung cấp";
 "Integrations" = "Tích hợp";
@@ -52,7 +53,8 @@
 "Choose what appears in the menu bar." = "Chọn nội dung hiển thị trên thanh menu.";
 "Manage CLI tools and Claude Code features." = "Quản lý công cụ CLI và tính năng Claude Code.";
 "Configure your AI usage monitor." = "Cấu hình trình theo dõi mức sử dụng AI.";
-"Accounts, status, and usage sources." = "Tài khoản, trạng thái và nguồn dữ liệu sử dụng.";
+"Manage saved accounts and active sessions." = "Quản lý tài khoản đã lưu và phiên đang hoạt động.";
+"Configure providers, status, and usage sources." = "Cấu hình nhà cung cấp, trạng thái và nguồn dữ liệu sử dụng.";
 "Default Codex home" = "Thư mục Codex mặc định";
 "Start managing accounts…" = "Bắt đầu quản lý tài khoản…";
 "Move current Codex home into AI Usage Monitor?" = "Chuyển thư mục Codex hiện tại vào AI Usage Monitor?";
@@ -124,6 +126,8 @@
 "Dark" = "Tối";
 "Dashboard theme" = "Chủ đề bảng điều khiển";
 "Choose the dashboard color palette." = "Chọn bảng màu cho bảng điều khiển.";
+"Show reset times in popover" = "Hiện thời gian reset trong popover";
+"Display quota reset times below account usage." = "Hiển thị thời gian reset hạn mức bên dưới mức sử dụng tài khoản.";
 "Usage thresholds" = "Ngưỡng sử dụng";
 "Thresholds control warning colors and quota notifications." = "Ngưỡng này điều khiển màu cảnh báo và thông báo hạn mức.";
 "Warning" = "Cảnh báo";
