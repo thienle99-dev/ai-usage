@@ -37,7 +37,7 @@ struct CompactPopoverView: View {
                 locale: locale,
                 isRefreshing: store.isRefreshing,
                 refresh: { Task { await store.refresh() } },
-                addAccount: { presentSettings(tab: "Providers") },
+                addAccount: { openWindow(id: "add-account") },
                 toggleAppearance: {
                     setAppearance(isDarkAppearance ? "light" : "dark")
                 },
@@ -92,7 +92,10 @@ struct CompactPopoverView: View {
                 .accessibilityHidden(true)
         }
         .environment(\.locale, store.locale)
-        .task { if store.needsInitialRefreshOnOpen { await store.refresh() } }
+        .task {
+            if store.needsInitialRefreshOnOpen { await store.refresh() }
+            await store.refreshManagedAccountQuotas()
+        }
     }
 
     private var moreMenu: some View {
@@ -299,6 +302,8 @@ private struct CompactHeaderHoverStyle: ViewModifier {
 
 private struct CompactProviderSection: View {
     @Environment(UsageStore.self) private var store
+    @Environment(AccountLoginCoordinator.self) private var accountLogin
+    @Environment(\.openWindow) private var openWindow
     @Environment(\.locale) private var locale
     let provider: Provider
     let showsSeparator: Bool
@@ -330,8 +335,8 @@ private struct CompactProviderSection: View {
                     CompactAccountRow(
                         row: row,
                         provider: provider,
-                        windows: row.selected ? snapshot?.windows ?? [] : [],
-                        status: providerStatus,
+                        windows: row.selected ? snapshot?.windows ?? [] : row.windows,
+                        status: row.status ?? providerStatus,
                         colorScheme: colorScheme,
                         increasedContrast: increasedContrast
                     )
@@ -353,27 +358,18 @@ private struct CompactProviderSection: View {
 
     private var accountRows: [CompactAccountRowModel] {
         switch provider {
+        case .claude:
+            return managedAccountRows(
+                accounts: store.claudeCodeAccounts,
+                activeID: store.claudeCodeInUseAccountID,
+                provider: .claude
+            )
         case .codex:
-            let activeID = store.codexInUseAccountID
-            var rows = store.codexAccounts.map { account in
-                let selected = account.id == activeID
-                return makeRow(
-                    id: account.id,
-                    name: selected ? (snapshot?.account ?? account.label) : account.label,
-                    selected: selected,
-                    selectedAction: { Task { await store.refresh(provider: .codex) } },
-                    inactiveAction: { store.activateCodexAccount(account.id) }
-                )
-            }
-            if !rows.contains(where: \.selected) {
-                rows.insert(makeRow(
-                    id: "codex-live",
-                    name: snapshot?.account ?? AppLocalization.string("Current session", locale: locale),
-                    selected: true,
-                    selectedAction: { Task { await store.refresh(provider: .codex) } }
-                ), at: 0)
-            }
-            return rows
+            return managedAccountRows(
+                accounts: store.codexAccounts,
+                activeID: store.codexInUseAccountID,
+                provider: .codex
+            )
 
         case .antigravity:
             let activeID = store.activeAntigravityAccountID
@@ -402,6 +398,50 @@ private struct CompactProviderSection: View {
         }
     }
 
+    private func managedAccountRows(
+        accounts: [ManagedAccountRecord],
+        activeID: String?,
+        provider managedProvider: Provider
+    ) -> [CompactAccountRowModel] {
+        let cached = store.managedAccountSnapshots[managedProvider] ?? [:]
+        var rows = accounts.map { account in
+            let selected = account.id == activeID
+            let quota = cached[account.id]
+            let needsLogin = store.managedAccountStatuses[managedProvider]?[account.id] == .authenticationRequired
+            let accountAction = {
+                if needsLogin {
+                    accountLogin.select(managedProvider)
+                    openWindow(id: "add-account")
+                } else if selected {
+                    Task { await store.refreshManagedAccountQuota(for: managedProvider, accountID: account.id) }
+                } else {
+                    Task { await store.activateManagedAccount(for: managedProvider, id: account.id) }
+                }
+            }
+            let row = makeRow(
+                id: account.id,
+                name: selected ? (snapshot?.account ?? account.label) : (quota?.account ?? account.label),
+                selected: selected,
+                selectedAction: accountAction,
+                inactiveAction: accountAction,
+                windows: quota?.windows ?? [],
+                status: quota?.status ?? store.managedAccountStatuses[managedProvider]?[account.id] ?? .unavailable
+            )
+            return row
+        }
+        if !rows.contains(where: \.selected) {
+            rows.insert(makeRow(
+                id: "\(managedProvider.rawValue)-live",
+                name: snapshot?.account ?? AppLocalization.string("Current session", locale: locale),
+                selected: true,
+                selectedAction: { Task { await store.refresh(provider: managedProvider) } },
+                windows: snapshot?.windows ?? [],
+                status: snapshot?.status
+            ), at: 0)
+        }
+        return rows
+    }
+
     private var defaultRow: CompactAccountRowModel {
         makeRow(
             id: "\(provider.rawValue)-current",
@@ -416,7 +456,9 @@ private struct CompactProviderSection: View {
         name: String,
         selected: Bool,
         selectedAction: @escaping () -> Void,
-        inactiveAction: (() -> Void)? = nil
+        inactiveAction: (() -> Void)? = nil,
+        windows: [UsageWindow] = [],
+        status: ProviderStatus? = nil
     ) -> CompactAccountRowModel {
         let account = accountParts(name)
         return CompactAccountRowModel(
@@ -424,7 +466,9 @@ private struct CompactProviderSection: View {
             name: account.name,
             plan: account.plan,
             selected: selected,
-            action: selected ? selectedAction : (inactiveAction ?? selectedAction)
+            action: selected ? selectedAction : (inactiveAction ?? selectedAction),
+            windows: windows,
+            status: status
         )
     }
 
@@ -442,6 +486,8 @@ private struct CompactAccountRowModel: Identifiable {
     let plan: String?
     let selected: Bool
     let action: () -> Void
+    let windows: [UsageWindow]
+    let status: ProviderStatus?
 }
 
 private struct CompactAccountRow: View {
@@ -543,7 +589,6 @@ private struct CompactAccountRow: View {
     }
 
     private var usageSummary: String {
-        guard row.selected else { return AppLocalization.string("Saved account · select to switch", locale: locale) }
         if status == .authenticationRequired { return AppLocalization.string("Sign-in expired", locale: locale) }
 
         if let fiveHour, fiveHour.validUtilization == 100 {
@@ -563,7 +608,6 @@ private struct CompactAccountRow: View {
     }
 
     private var resetSummary: String? {
-        guard row.selected else { return nil }
         let quotaResets: [(String, UsageWindow?)] = [
             (AppLocalization.string("5h", locale: locale), fiveHour),
             (AppLocalization.string("Week", locale: locale), weekly)
@@ -578,7 +622,7 @@ private struct CompactAccountRow: View {
     }
 
     private var detailTooltip: String {
-        let state = row.selected ? status.title : AppLocalization.string("Saved", locale: locale)
+        let state = status.title
         var lines = ["\(providerLabel) · \(state)", row.name]
         if let plan = row.plan, !plan.isEmpty {
             lines.append(String(
@@ -588,22 +632,18 @@ private struct CompactAccountRow: View {
             ))
         }
 
-        if row.selected {
-            if windows.isEmpty {
-                lines.append(AppLocalization.string("Usage unavailable", locale: locale))
-            } else {
-                for window in windows {
-                    let used = window.validUtilization.map {
-                        String(format: AppLocalization.string("%@%% used", locale: locale), locale: locale, arguments: [$0.formatted(.number.precision(.fractionLength(0...2)).locale(locale))])
-                    } ?? AppLocalization.string("Usage unavailable", locale: locale)
-                    lines.append("\(window.label) · \(used)")
-                    let reset = window.resetsAt.map(resetTimeLabel) ?? AppLocalization.string("Reset unavailable", locale: locale)
-                    lines.append("\(AppLocalization.string("Reset", locale: locale)) \(reset)")
-                    if let detail = window.detail, !detail.isEmpty { lines.append(detail) }
-                }
-            }
+        if windows.isEmpty {
+            lines.append(AppLocalization.string("Usage unavailable", locale: locale))
         } else {
-            lines.append(AppLocalization.string("Usage is shown for the active account only.", locale: locale))
+            for window in windows {
+                let used = window.validUtilization.map {
+                    String(format: AppLocalization.string("%@%% used", locale: locale), locale: locale, arguments: [$0.formatted(.number.precision(.fractionLength(0...2)).locale(locale))])
+                } ?? AppLocalization.string("Usage unavailable", locale: locale)
+                lines.append("\(window.label) · \(used)")
+                let reset = window.resetsAt.map(resetTimeLabel) ?? AppLocalization.string("Reset unavailable", locale: locale)
+                lines.append("\(AppLocalization.string("Reset", locale: locale)) \(reset)")
+                if let detail = window.detail, !detail.isEmpty { lines.append(detail) }
+            }
         }
 
         return lines.joined(separator: "\n")

@@ -1,7 +1,8 @@
 import Foundation
 import Darwin
+import CryptoKit
 
-enum ManagedAccountTool: String, Codable, CaseIterable, Sendable { case codex, antigravity, claudeDesktop }
+enum ManagedAccountTool: String, Codable, CaseIterable, Sendable { case codex, claudeCode, antigravity, claudeDesktop }
 
 struct ManagedAccountRecord: Codable, Identifiable, Equatable, Sendable {
     let id: String
@@ -46,7 +47,7 @@ struct AccountSessionIndex: Codable, Equatable, Sendable {
 }
 
 struct AccountSessionJournal: Codable, Equatable, Sendable {
-    enum Operation: String, Codable, Sendable { case stash, activate }
+    enum Operation: String, Codable, Sendable { case stash, activate, importSession }
     var operation: Operation
     var tool: ManagedAccountTool
     var accountID: String
@@ -65,6 +66,7 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
 
     private let tool: ManagedAccountTool
     private let indexURL: URL
+    private let operationLockURL: URL
     private let identify: Identify
     private let stage: Stage
     private let activate: Activate
@@ -78,7 +80,9 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
          safeToChange: @escaping IsSafeToChange = {}, movesSessions: Bool = false,
          recoverInterrupted: @escaping @Sendable (AccountSessionJournal) throws -> Void = { _ in },
          fileManager: FileManager = .default) {
-        self.tool = tool; self.indexURL = indexURL; self.identify = identify
+        self.tool = tool; self.indexURL = indexURL
+        self.operationLockURL = indexURL.appendingPathExtension("\(tool.rawValue).operation-lock")
+        self.identify = identify
         self.stage = stage; self.activate = activate; self.safeToChange = safeToChange
         self.movesSessions = movesSessions; self.recoverInterrupted = recoverInterrupted
         self.fileManager = fileManager
@@ -140,6 +144,53 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
         }
     }
 
+    /// Imports an independently authenticated session without changing the selected account.
+    /// The caller supplies a stable, non-secret identity obtained from the tool's account metadata.
+    @discardableResult
+    func importSession(reference: String, fingerprint: String, label: String?) throws -> ManagedAccountRecord {
+        guard !reference.isEmpty, !fingerprint.isEmpty else { throw AccountSessionError.unidentified }
+        return try withIndex { index in
+            try settle(&index)
+            if let existingPosition = index.accounts.firstIndex(where: {
+                $0.tool == tool && $0.identityFingerprint == fingerprint
+            }) {
+                let existing = index.accounts[existingPosition]
+                index.journal = AccountSessionJournal(
+                    operation: .importSession, tool: tool, accountID: existing.id,
+                    previousID: index.inUse[tool], previousFingerprint: "", targetFingerprint: fingerprint,
+                    stagedReference: nil, startedAt: .now
+                )
+                try persist(index)
+                let savedReference = try stage(reference, existing.id)
+                index.accounts[existingPosition].sessionReference = savedReference
+                if let label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    index.accounts[existingPosition].label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                index.journal = nil
+                try persist(index)
+                return index.accounts[existingPosition]
+            }
+
+            let record = ManagedAccountRecord(
+                id: stableImportedID(fingerprint), label: label ?? "Account", tool: tool,
+                sessionReference: reference, identityFingerprint: fingerprint, registeredAt: .now
+            )
+            index.journal = AccountSessionJournal(
+                operation: .importSession, tool: tool, accountID: record.id,
+                previousID: index.inUse[tool], previousFingerprint: "", targetFingerprint: fingerprint,
+                stagedReference: nil, startedAt: .now
+            )
+            try persist(index)
+            let savedReference = try stage(reference, record.id)
+            var saved = record
+            saved.sessionReference = savedReference
+            index.accounts.append(saved)
+            index.journal = nil
+            try persist(index)
+            return saved
+        }
+    }
+
     func activateAccount(_ id: String) throws {
         try withIndex { index in
             try settle(&index)
@@ -155,19 +206,19 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
             }
             let current = index.accounts.first(where: { $0.tool == tool && $0.identityFingerprint == live.fingerprint })
             let isSignedOutDesktop = movesSessions && tool == .claudeDesktop && live.fingerprint == ClaudeDesktopSessionAdapter.signedOutFingerprint
-            if !isSignedOutDesktop && current == nil {
+            if tool == .claudeDesktop && !isSignedOutDesktop && current == nil {
                 throw AccountSessionError.unidentified
             }
-            let previousID = current?.id ?? index.inUse[tool]
-            if !isSignedOutDesktop && previousID == nil {
-                throw AccountSessionError.recoveryRequired("register the current session before switching")
-            }
+            let indexedCurrent = index.accounts.first(where: {
+                $0.id == index.inUse[tool] && $0.identityFingerprint == live.fingerprint
+            })
+            let previousID = current?.id ?? indexedCurrent?.id ?? (isSignedOutDesktop ? nil : UUID().uuidString.lowercased())
             index.journal = AccountSessionJournal(operation: .activate, tool: tool, accountID: selected.id,
                 previousID: previousID, previousFingerprint: live.fingerprint, targetFingerprint: selected.identityFingerprint,
                 stagedReference: nil, startedAt: .now)
             try persist(index) // Intent is durable before creating the outgoing spare.
             if !isSignedOutDesktop {
-                guard let previousID else { throw AccountSessionError.recoveryRequired("register the current session before switching") }
+                guard let previousID else { throw AccountSessionError.recoveryRequired("the outgoing session could not be identified") }
                 let spare = try stage(live.reference, previousID)
                 if let current, let pos = index.accounts.firstIndex(where: { $0.id == current.id }) {
                     index.accounts[pos].sessionReference = spare
@@ -200,6 +251,14 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
         return try JSONDecoder().decode(AccountSessionIndex.self, from: Data(contentsOf: indexURL))
     }
 
+    func acquireOperationLock() throws -> AccountSessionOperationLease {
+        try AccountSessionOperationLease(url: operationLockURL)
+    }
+
+    func acquireAccountLock(_ accountID: String) throws -> AccountSessionOperationLease {
+        try AccountSessionOperationLease(url: operationLockURL.appendingPathExtension("account-\(accountID)"))
+    }
+
     func removeAccount(_ id: String) throws {
         try withIndex { index in
             try settle(&index)
@@ -220,6 +279,8 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     /// filesystem mutations are involved in this index-only transaction.
     @discardableResult
     func importAccountsOnce(_ records: [ManagedAccountRecord], migrationID: String, activeAccountID: String? = nil) throws -> Bool {
+        let operationLease = try acquireOperationLock()
+        defer { withExtendedLifetime(operationLease) {} }
         let directory = indexURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
@@ -250,12 +311,24 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
         return live
     }
 
+    private func stableImportedID(_ fingerprint: String) -> String {
+        let digest = SHA256.hash(data: Data((tool.rawValue + ":" + fingerprint).utf8))
+            .map { String(format: "%02x", $0) }.joined()
+        return "\(tool.rawValue)-\(digest.prefix(24))"
+    }
+
     /// Recovery decision table (always consult live identity): previous fingerprint =>
     /// retain/restore previous in-use id and clear intent; target fingerprint => commit
     /// target as in-use and clear intent; anything else or unidentified => throw without
     /// changing the index. This works because staging is durable before activation.
     private func settle(_ index: inout AccountSessionIndex) throws {
         guard let journal = index.journal else { return }
+        if journal.operation == .importSession {
+            // Imports never touch the live CLI session or its in-use selection. A
+            // pending sign-in draft owns retry/cleanup if the process was interrupted.
+            index.journal = nil
+            return
+        }
         if movesSessions { try safeToChange() }
         try recoverInterrupted(journal)
         let live = try identified()
@@ -271,6 +344,8 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     }
 
     private func withIndex<T>(_ body: (inout AccountSessionIndex) throws -> T) throws -> T {
+        let operationLease = try acquireOperationLock()
+        defer { withExtendedLifetime(operationLease) {} }
         let directory = indexURL.deletingLastPathComponent()
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
@@ -289,6 +364,30 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(index).write(to: indexURL, options: .atomic)
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: indexURL.path)
+    }
+}
+
+final class AccountSessionOperationLease: @unchecked Sendable {
+    private var descriptor: Int32 = -1
+
+    init(url: URL) throws {
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        descriptor = open(url.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw AccountSessionError.lockFailed }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            close(descriptor)
+            descriptor = -1
+            throw AccountSessionError.lockFailed
+        }
+    }
+
+    deinit {
+        if descriptor >= 0 {
+            _ = flock(descriptor, LOCK_UN)
+            close(descriptor)
+        }
     }
 }
 
@@ -311,10 +410,10 @@ enum AccountSessionError: LocalizedError, Equatable {
     case unidentified, accountMissing, lockFailed, recoveryRequired(String)
     var errorDescription: String? {
         switch self {
-        case .unidentified: "The active account could not be identified safely."
-        case .accountMissing: "The selected account is no longer registered."
-        case .lockFailed: "Could not acquire the account storage lock."
-        case .recoveryRequired: "An interrupted account change needs recovery before switching."
+        case .unidentified: String(localized: "The active account could not be identified safely.")
+        case .accountMissing: String(localized: "The selected account is no longer registered.")
+        case .lockFailed: String(localized: "Could not acquire the account storage lock.")
+        case .recoveryRequired: String(localized: "An interrupted account change needs recovery before switching.")
         }
     }
 }

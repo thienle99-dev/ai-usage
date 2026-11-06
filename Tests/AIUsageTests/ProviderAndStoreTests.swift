@@ -57,9 +57,110 @@ private actor FixtureHTTPDataLoader: HTTPDataLoading {
     func capturedRequests() -> [URLRequest] { requests }
 }
 
+private final class FixtureManagedClaudeCredentialStore: ManagedClaudeCredentialStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var credentials: [String: Data]
+
+    init(credentials: [String: Data]) { self.credentials = credentials }
+
+    func load(accountID: String) throws -> Data {
+        lock.lock(); defer { lock.unlock() }
+        guard let credential = credentials[accountID] else { throw ClaudeCodeSessionError.missingCredential }
+        return credential
+    }
+
+    func save(_ data: Data, accountID: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        credentials[accountID] = data
+    }
+}
+
 private struct FixtureCodexSource: CodexAppServerDataSource {
     let data: Data
     func read() async throws -> Data { data }
+}
+
+private struct FixtureManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
+    let snapshots: [String: UsageSnapshot]
+    func fetch(provider: Provider, account: ManagedAccountRecord) async throws -> UsageSnapshot {
+        guard let snapshot = snapshots[account.identityFingerprint] else { throw ProviderFailure.http(401) }
+        return snapshot
+    }
+}
+
+private actor AsyncTestSignal {
+    private var isSignaled = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func signal() {
+        isSignaled = true
+        continuation?.resume()
+        continuation = nil
+    }
+
+    func wait() async {
+        if isSignaled { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+}
+
+private actor BlockingManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
+    let started = AsyncTestSignal()
+    let release = AsyncTestSignal()
+    let snapshot: UsageSnapshot
+
+    init(snapshot: UsageSnapshot) { self.snapshot = snapshot }
+
+    func fetch(provider: Provider, account: ManagedAccountRecord) async throws -> UsageSnapshot {
+        await started.signal()
+        await release.wait()
+        return snapshot
+    }
+}
+
+@MainActor private final class FakeAccountLoginProcessHandle: AccountLoginProcessHandle {
+    var isRunning = true
+    var sentData: [Data] = []
+    var onTerminate: (() -> Void)?
+    func terminate() { isRunning = false; onTerminate?() }
+    func send(_ data: Data) { sentData.append(data) }
+}
+
+@MainActor private final class FakeAccountLoginProcessLauncher: AccountLoginProcessLaunching {
+    private(set) var arguments: [String] = []
+    private(set) var environment: [String: String] = [:]
+    private(set) var handle: FakeAccountLoginProcessHandle?
+    private var outputHandler: ((Data) -> Void)?
+    private var terminationHandler: ((Int32) -> Void)?
+
+    func launch(executable: URL, arguments: [String], environment: [String: String], output: @escaping @MainActor (Data) -> Void, termination: @escaping @MainActor (Int32) -> Void) throws -> any AccountLoginProcessHandle {
+        self.arguments = arguments
+        self.environment = environment
+        outputHandler = output
+        terminationHandler = termination
+        let handle = FakeAccountLoginProcessHandle()
+        handle.onTerminate = { [weak self] in self?.finish(status: 15) }
+        self.handle = handle
+        return handle
+    }
+
+    func emit(_ text: String) { outputHandler?(Data(text.utf8)) }
+    func finish(status: Int32 = 0) {
+        handle?.isRunning = false
+        terminationHandler?(status)
+    }
+}
+
+@MainActor private final class FakeAccountLoginSessionVerifier: AccountLoginSessionVerifying {
+    var shouldFail = false
+    var onVerify: (() -> Void)?
+
+    func verifyAndImport(provider: Provider, directory: URL, store: UsageStore) async throws -> ManagedAccountRecord {
+        onVerify?()
+        if shouldFail { throw ProviderFailure.http(401) }
+        return ManagedAccountRecord(id: "imported", label: "fixture", tool: provider == .claude ? .claudeCode : .codex,
+                                    sessionReference: "fixture-ref", identityFingerprint: "fixture-fp", registeredAt: .now)
+    }
 }
 
 private actor MutableCodexSource: CodexAppServerDataSource {
@@ -83,6 +184,26 @@ private func codexMarker(in home: URL) -> String? {
 
 private func codexAccountPayload(email: String, window: String = "primary", percent: Double = 10, durationMins: Double = 300) -> Data {
     Data(#"{"result":{"email":"\#(email)","rateLimits":{"\#(window)":{"usedPercent":\#(percent),"windowDurationMins":\#(durationMins)}}}}"#.utf8)
+}
+
+@MainActor private func makeIsolatedAccountStore(root: URL) -> UsageStore {
+    let indexURL = root.appendingPathComponent("account-index.json")
+    let codexLive = LockedAccountFixture(reference: "live-codex", fingerprint: "codex-live")
+    let claudeLive = LockedAccountFixture(reference: "live-claude", fingerprint: "claude-live")
+    let codexManager = DurableAccountSessionManager(
+        tool: .codex, indexURL: indexURL, identify: { codexLive.read() },
+        stage: { source, id in "codex-\(id)-\(source)" }, activate: { _ in }
+    )
+    let claudeManager = DurableAccountSessionManager(
+        tool: .claudeCode, indexURL: indexURL, identify: { claudeLive.read() },
+        stage: { source, id in "claude-\(id)-\(source)" }, activate: { _ in }
+    )
+    let suite = UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!
+    return UsageStore(
+        providers: [], defaults: suite, startImmediately: false,
+        codexAccountManager: codexManager, codexIndexURL: indexURL,
+        claudeCodeAccountManager: claudeManager
+    )
 }
 
 private actor FetchCounter {
@@ -270,6 +391,238 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertNil(String(data: data, encoding: .utf8)?.range(of: "secret-credential-fixture"))
         let mode = (try FileManager.default.attributesOfItem(atPath: root.appendingPathComponent("state.json").path)[.posixPermissions] as? NSNumber)?.intValue
         XCTAssertEqual(mode.map { $0 & 0o777 }, 0o600)
+    }
+
+    func testImportedAccountUpdatesDuplicateWithoutChangingInUse() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "live-a", fingerprint: "fp-a")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() },
+            stage: { source, id in "managed-\(id)-\(source)" },
+            activate: { _ in }
+        )
+        let active = try manager.registerCurrentAccount()
+        let added = try manager.importSession(reference: "isolated-b", fingerprint: "fp-b", label: "B")
+        XCTAssertEqual(try manager.currentIndex().inUse[.codex], active.id)
+        XCTAssertEqual(added.sessionReference, "managed-\(added.id)-isolated-b")
+
+        let updated = try manager.importSession(reference: "isolated-b-refreshed", fingerprint: "fp-b", label: "B updated")
+        let index = try manager.currentIndex()
+        XCTAssertEqual(index.accounts.count, 2)
+        XCTAssertEqual(updated.id, added.id)
+        XCTAssertEqual(updated.label, "B updated")
+        XCTAssertEqual(updated.sessionReference, "managed-\(updated.id)-isolated-b-refreshed")
+        XCTAssertEqual(index.inUse[.codex], active.id)
+    }
+
+    func testInterruptedImportCanBeRetriedWithoutChangingInUse() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "live-a", fingerprint: "fp-a")
+        let shouldFail = LockedAccountFixture(reference: "yes", fingerprint: "")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() },
+            stage: { source, _ in
+                if shouldFail.read().fingerprint.isEmpty { throw ProviderFailure.process("injected stage failure") }
+                return "managed-\(source)"
+            },
+            activate: { _ in }
+        )
+        let active = try manager.registerCurrentAccount()
+        XCTAssertThrowsError(try manager.importSession(reference: "isolated-b", fingerprint: "fp-b", label: nil))
+        shouldFail.set(reference: "no", fingerprint: "ok")
+        let added = try manager.importSession(reference: "isolated-b", fingerprint: "fp-b", label: nil)
+        let index = try manager.currentIndex()
+        XCTAssertNil(index.journal)
+        XCTAssertEqual(index.inUse[.codex], active.id)
+        XCTAssertEqual(index.accounts.count, 2)
+        XCTAssertEqual(added.sessionReference, "managed-isolated-b")
+    }
+
+    func testSwitchAutomaticallyPreservesAnUnregisteredLiveSession() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "live-a", fingerprint: "fp-a")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() },
+            stage: { source, id in "parked-\(id)-\(source)" },
+            activate: { reference in live.set(reference: reference, fingerprint: "fp-b") }
+        )
+        let added = try manager.importSession(reference: "isolated-b", fingerprint: "fp-b", label: "B")
+
+        try manager.activateAccount(added.id)
+
+        let index = try manager.currentIndex()
+        XCTAssertEqual(index.inUse[.codex], added.id)
+        XCTAssertEqual(index.accounts.count, 2)
+        let preserved = try XCTUnwrap(index.accounts.first(where: { $0.identityFingerprint == "fp-a" }))
+        XCTAssertEqual(preserved.sessionReference, "parked-\(preserved.id)-live-a")
+    }
+
+    @MainActor
+    func testManagedQuotaIsStoredUnderRequestedAccountWithoutReplacingLiveSnapshot() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "live-home", fingerprint: "active-a")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: root.appendingPathComponent("state.json"),
+            identify: { live.read() },
+            stage: { source, id in "managed-\(id)-\(source)" },
+            activate: { _ in }
+        )
+        _ = try manager.registerCurrentAccount(label: "A")
+        let accountBQuota = UsageSnapshot(
+            provider: .codex,
+            windows: [UsageWindow(label: "5-hour limit", utilization: 27, resetsAt: nil)],
+            account: "B", accountID: "not-the-record-id", lastSuccess: .now
+        )
+        let store = UsageStore(
+            providers: [], defaults: isolatedDefaults(), startImmediately: false,
+            codexAccountManager: manager,
+            accountQuotaFetcher: FixtureManagedAccountQuotaFetcher(snapshots: ["account-b": accountBQuota])
+        )
+        store.snapshots[.codex] = UsageSnapshot(
+            provider: .codex,
+            windows: [UsageWindow(label: "5-hour limit", utilization: 88, resetsAt: nil)],
+            account: "A", accountID: "active-a", lastSuccess: .now
+        )
+        try store.importAccount(for: .codex, reference: "isolated-home-b", fingerprint: "account-b", label: "B")
+        let accountB = try XCTUnwrap(store.codexAccounts.first(where: { $0.identityFingerprint == "account-b" }))
+
+        await store.refreshManagedAccountQuota(for: .codex, accountID: accountB.id)
+
+        XCTAssertEqual(store.snapshots[.codex]?.accountID, "active-a")
+        XCTAssertEqual(store.snapshots[.codex]?.windows.first?.validUtilization, 88)
+        XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.accountID, accountB.id)
+        XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.windows.first?.validUtilization, 27)
+    }
+
+    @MainActor
+    func testManagedQuotaRefreshAndSwitchKeepResultAttachedToItsAccount() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = LockedAccountFixture(reference: "live-a", fingerprint: "fp-a")
+        let activated = AsyncTestSignal()
+        let indexURL = root.appendingPathComponent("index.json")
+        let codexManager = DurableAccountSessionManager(
+            tool: .codex, indexURL: indexURL, identify: { live.read() },
+            stage: { source, id in "managed-\(id)-\(source)" },
+            activate: { reference in
+                live.set(reference: reference, fingerprint: "fp-b")
+                Task { await activated.signal() }
+            }
+        )
+        let claudeManager = DurableAccountSessionManager(
+            tool: .claudeCode, indexURL: indexURL,
+            identify: { ("claude", "claude", nil) }, stage: { source, _ in source }, activate: { _ in }
+        )
+        _ = try codexManager.registerCurrentAccount(label: "A")
+        let quotaFetcher = BlockingManagedAccountQuotaFetcher(snapshot: UsageSnapshot(
+            provider: .codex, windows: [UsageWindow(label: "5-hour limit", utilization: 21, resetsAt: nil)],
+            account: "B", accountID: nil, lastSuccess: .now
+        ))
+        let store = UsageStore(
+            providers: [], defaults: UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)" )!,
+            startImmediately: false, codexAccountManager: codexManager,
+            codexIndexURL: indexURL, claudeCodeAccountManager: claudeManager,
+            accountQuotaFetcher: quotaFetcher
+        )
+        try store.importAccount(for: .codex, reference: "isolated-b", fingerprint: "fp-b", label: "B")
+        let accountB = try XCTUnwrap(store.codexAccounts.first(where: { $0.identityFingerprint == "fp-b" }))
+        let refreshTask = Task { await store.refreshManagedAccountQuota(for: .codex, accountID: accountB.id) }
+        await quotaFetcher.started.wait()
+
+        await store.activateManagedAccount(for: .codex, id: accountB.id)
+        await quotaFetcher.release.signal()
+        await refreshTask.value
+        await activated.wait()
+
+        XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.accountID, accountB.id)
+        XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.windows.first?.validUtilization, 21)
+        XCTAssertEqual(try codexManager.currentIndex().inUse[.codex], accountB.id)
+    }
+
+    @MainActor
+    func testAccountLoginCoordinatorImportsAfterFakeCLICompletes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeIsolatedAccountStore(root: root)
+        let launcher = FakeAccountLoginProcessLauncher()
+        let verifier = FakeAccountLoginSessionVerifier()
+        let verified = expectation(description: "fake login verified")
+        verifier.onVerify = { verified.fulfill() }
+        let coordinator = AccountLoginCoordinator(
+            store: store,
+            processLauncher: launcher,
+            sessionVerifier: verifier,
+            draftRootURL: root.appendingPathComponent("drafts"),
+            cliExecutable: { _ in URL(fileURLWithPath: "/fake/claude") }
+        )
+
+        coordinator.beginSignIn()
+        XCTAssertEqual(coordinator.phase, .signingIn)
+        XCTAssertNotNil(launcher.environment["CLAUDE_CONFIG_DIR"])
+        XCTAssertNil(launcher.environment["CLAUDE_CODE_OAUTH_TOKEN"])
+        launcher.emit("Open https://example.test/login and paste code here")
+        XCTAssertEqual(coordinator.loginURL?.host, "example.test")
+        XCTAssertTrue(coordinator.requestsCode)
+        coordinator.submitCode("123456")
+        XCTAssertEqual(launcher.handle?.sentData.last, Data("123456\n".utf8))
+        launcher.finish()
+
+        await fulfillment(of: [verified], timeout: 2)
+        XCTAssertEqual(coordinator.phase, .succeeded)
+        XCTAssertFalse(coordinator.isRunning)
+    }
+
+    @MainActor
+    func testAccountLoginCoordinatorShowsRetryableVerificationFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = FakeAccountLoginProcessLauncher()
+        let verifier = FakeAccountLoginSessionVerifier()
+        verifier.shouldFail = true
+        let verified = expectation(description: "fake login verified")
+        verifier.onVerify = { verified.fulfill() }
+        let coordinator = AccountLoginCoordinator(
+            store: makeIsolatedAccountStore(root: root), processLauncher: launcher, sessionVerifier: verifier,
+            draftRootURL: root.appendingPathComponent("drafts"), cliExecutable: { _ in URL(fileURLWithPath: "/fake/claude") }
+        )
+
+        coordinator.beginSignIn()
+        let sessionPath = try XCTUnwrap(launcher.environment["CLAUDE_CONFIG_DIR"])
+        launcher.finish()
+        await fulfillment(of: [verified], timeout: 2)
+
+        guard case .failed = coordinator.phase else { return XCTFail("expected a retryable failure") }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionPath))
+    }
+
+    @MainActor
+    func testAccountLoginCoordinatorCancelsFakeCLIAndCleansDraft() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = FakeAccountLoginProcessLauncher()
+        let coordinator = AccountLoginCoordinator(
+            store: makeIsolatedAccountStore(root: root), processLauncher: launcher,
+            draftRootURL: root.appendingPathComponent("drafts"), cliExecutable: { _ in URL(fileURLWithPath: "/fake/claude") }
+        )
+
+        coordinator.beginSignIn()
+        let sessionPath = try XCTUnwrap(launcher.environment["CLAUDE_CONFIG_DIR"])
+        await coordinator.cancel()
+
+        XCTAssertEqual(coordinator.phase, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: sessionPath))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("drafts/pending.json").path))
     }
 
     func testAntigravityMigrationImportsOnlyAccountsWithKeychainCredentials() {
@@ -828,6 +1181,87 @@ final class ProviderAndStoreTests: XCTestCase {
 
         let encoded = try JSONEncoder().encode(UsageCardLayout.collapsible)
         XCTAssertEqual(try JSONDecoder().decode(UsageCardLayout.self, from: encoded), .collapsible)
+    }
+
+    func testClaudeCodeDefaultLiveServiceMatchesPrimaryReadService() {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let config = home.appendingPathComponent(".claude", isDirectory: true)
+        XCTAssertEqual(
+            ClaudeCodeCredentialVault.liveService(configDirectory: config, environment: [:], homeDirectory: home),
+            "Claude Code-credentials"
+        )
+    }
+
+    func testClaudeManagedQuotaRefreshPersistsRotatedCredentialBeforeUsageRequest() async throws {
+        let original = try JSONSerialization.data(withJSONObject: [
+            "credential": ["claudeAiOauth": [
+                "accessToken": "expired-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 0
+            ]],
+            "accountMetadata": ["oauthAccount": ["email": "claude@example.com"]]
+        ])
+        let credentialStore = FixtureManagedClaudeCredentialStore(credentials: ["account-a": original])
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"access_token":"fresh-access","refresh_token":"rotated-refresh","expires_in":3600}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"five_hour":{"utilization":31}}"#.utf8))
+        ])
+        let fetcher = LocalManagedAccountQuotaFetcher(claudeCredentialStore: credentialStore, httpLoader: loader)
+        let account = ManagedAccountRecord(
+            id: "account-a", label: "A", tool: .claudeCode,
+            sessionReference: ClaudeCodeCredentialVault.reference("account-a"),
+            identityFingerprint: "claude-a", registeredAt: .now
+        )
+
+        let snapshot = try await fetcher.fetch(provider: .claude, account: account)
+
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 31)
+        let saved = try credentialStore.load(accountID: "account-a")
+        XCTAssertEqual(try ClaudeCodeCredentialVault.accessToken(from: saved), "fresh-access")
+        let savedObject = try XCTUnwrap(JSONSerialization.jsonObject(with: saved) as? [String: Any])
+        let savedCredential = try XCTUnwrap(savedObject["credential"] as? [String: Any])
+        let savedOAuth = try XCTUnwrap(savedCredential["claudeAiOauth"] as? [String: Any])
+        XCTAssertEqual(savedOAuth["refreshToken"] as? String, "rotated-refresh")
+        XCTAssertNotNil(savedObject["accountMetadata"])
+
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertEqual(requests[0].url?.absoluteString, "https://platform.claude.com/v1/oauth/token")
+        XCTAssertEqual(requests[1].value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
+        let refreshBody = try XCTUnwrap(requests[0].httpBody)
+        let refreshObject = try XCTUnwrap(JSONSerialization.jsonObject(with: refreshBody) as? [String: String])
+        XCTAssertEqual(refreshObject["refresh_token"], "old-refresh")
+        XCTAssertEqual(refreshObject["grant_type"], "refresh_token")
+    }
+
+    func testClaudeManagedQuotaForcesRefreshAfterEarlyUnauthorizedResponse() async throws {
+        let original = try JSONSerialization.data(withJSONObject: [
+            "claudeAiOauth": [
+                "accessToken": "revoked-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": (Date.now.addingTimeInterval(3_600).timeIntervalSince1970 * 1_000) as NSNumber
+            ]
+        ])
+        let credentialStore = FixtureManagedClaudeCredentialStore(credentials: ["account-a": original])
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 401, body: Data()),
+            HTTPFixture(status: 200, body: Data(#"{"access_token":"fresh-access","refresh_token":"rotated-refresh","expires_in":3600}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"five_hour":{"utilization":44}}"#.utf8))
+        ])
+        let fetcher = LocalManagedAccountQuotaFetcher(claudeCredentialStore: credentialStore, httpLoader: loader)
+        let account = ManagedAccountRecord(
+            id: "account-a", label: "A", tool: .claudeCode,
+            sessionReference: ClaudeCodeCredentialVault.reference("account-a"),
+            identityFingerprint: "claude-a", registeredAt: .now
+        )
+
+        let snapshot = try await fetcher.fetch(provider: .claude, account: account)
+
+        XCTAssertEqual(snapshot.windows.first?.validUtilization, 44)
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.count, 3)
+        XCTAssertEqual(requests[2].value(forHTTPHeaderField: "Authorization"), "Bearer fresh-access")
+        XCTAssertEqual(try ClaudeCodeCredentialVault.accessToken(from: credentialStore.load(accountID: "account-a")), "fresh-access")
     }
 
     func testClaudeRetries429OnlyWhenRetryAfterIsPositive() async throws {

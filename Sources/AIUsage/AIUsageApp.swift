@@ -4,6 +4,7 @@ import Darwin
 
 @main struct AIUsageApp: App {
     @State private var store: UsageStore
+    @State private var accountLogin: AccountLoginCoordinator
     @StateObject private var updateManager: UpdateManager
 
     init() {
@@ -17,7 +18,9 @@ import Darwin
             // Menu bar apps otherwise leave AppKit's generic placeholder there.
             NSApplication.shared.applicationIconImage = applicationIcon
         }
-        _store = State(initialValue: UsageStore())
+        let store = UsageStore()
+        _store = State(initialValue: store)
+        _accountLogin = State(initialValue: AccountLoginCoordinator(store: store))
         _updateManager = StateObject(wrappedValue: UpdateManager())
     }
 
@@ -25,6 +28,7 @@ import Darwin
         MenuBarExtra {
             CompactPopoverView()
                 .environment(store)
+                .environment(accountLogin)
                 .environmentObject(updateManager)
                 .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
@@ -37,11 +41,22 @@ import Darwin
         Window("Settings", id: "settings") {
             SettingsWindowView()
                 .environment(store)
+                .environment(accountLogin)
                 .environmentObject(updateManager)
                 .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
         }
         .defaultSize(width: 760, height: 560)
+        .windowResizability(.contentSize)
+
+        Window("Add account", id: "add-account") {
+            AddAccountWindowView()
+                .environment(store)
+                .environment(accountLogin)
+                .environment(\.locale, store.locale)
+                .preferredColorScheme(store.colorSchemeOverride)
+        }
+        .defaultSize(width: 540, height: 500)
         .windowResizability(.contentSize)
 
         Window("Token & Cost Report", id: "usage-report") {

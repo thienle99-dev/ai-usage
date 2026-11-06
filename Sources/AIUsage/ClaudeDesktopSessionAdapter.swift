@@ -226,6 +226,8 @@ struct ClaudeDesktopSessionAdapter {
         guard fm.fileExists(atPath: live.path) else { throw ClaudeDesktopSessionError.missingDataFolder }
         try validateRoots(live: live, parkedRoot: parkedRoot, fileManager: fm)
         switch journal.operation {
+        case .importSession:
+            break
         case .stash:
             let parked = parkedRoot.appendingPathComponent("parked-\(safeComponent(journal.accountID))")
             try moveSessionItems(from: parked, to: live, fileManager: fm)

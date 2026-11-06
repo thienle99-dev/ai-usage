@@ -1310,6 +1310,7 @@ struct AccountsSettingsView: View {
 private struct ProviderAndAccountSettingsPage: View {
     let page: SettingsCategory
     @Environment(UsageStore.self) private var store
+    @Environment(\.openWindow) private var openWindow
     @State private var expandedProviders = Set(Provider.supported.map(\.rawValue))
     @State private var cursorCookieHeader = ""
     @State private var cursorCredentialMessage: String?
@@ -1383,6 +1384,9 @@ private struct ProviderAndAccountSettingsPage: View {
                 openCodeContent
             }
             } else {
+            SettingsSection(title: "Claude Code accounts") {
+                managedAccountsContent(provider: .claude)
+            }
             SettingsSection(title: "Codex accounts") {
                 codexAccountsContent
             }
@@ -1514,7 +1518,7 @@ private struct ProviderAndAccountSettingsPage: View {
 
     @ViewBuilder
     private var codexAccountsContent: some View {
-        Text("Register the current Codex login, stash a durable copy, or activate a saved account. Codex CLI and AI Usage Monitor share the live Codex home.")
+        Text("Add accounts in a separate sign-in window. Adding an account keeps the current Codex login active.")
             .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
         ForEach(store.codexAccounts) { account in
@@ -1534,12 +1538,43 @@ private struct ProviderAndAccountSettingsPage: View {
         }
         HStack {
             Spacer()
-            Button("Register current login") { store.registerCurrentCodexLogin() }
+            Button("Add account…") { openWindow(id: "add-account") }
                 .buttonStyle(.bordered).controlSize(.small)
-            Button("Stash active session") { store.stashCodexActiveSession() }
-                .buttonStyle(.bordered).controlSize(.small)
-        }.disabled(store.codexAccountActionInFlight || store.refreshing.contains(.codex))
+        }
         if let error = store.codexAccountError { SettingsErrorText(text: error).padding(.vertical, 4) }
+    }
+
+    @ViewBuilder
+    private func managedAccountsContent(provider: Provider) -> some View {
+        Text("Save the current account or sign in to another account without changing the active login.")
+            .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
+            .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
+        let accounts = provider == .claude ? store.claudeCodeAccounts : store.codexAccounts
+        let activeID = provider == .claude ? store.claudeCodeInUseAccountID : store.codexInUseAccountID
+        ForEach(accounts) { account in
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(account.label).font(.system(size: 12, weight: .medium))
+                    Text(account.id == activeID ? "In use" : "Saved")
+                        .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+                }
+                Spacer()
+                if account.id != activeID {
+                    Button("Activate") { Task { await store.activateManagedAccount(for: provider, id: account.id) } }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(store.refreshing.contains(provider) || store.refreshingManagedAccounts.contains(account.id))
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        HStack {
+            Spacer()
+            Button("Add account…") { openWindow(id: "add-account") }
+                .buttonStyle(.bordered).controlSize(.small)
+        }
+        if let error = store.managedAccountErrors[provider]? ["index"] {
+            SettingsErrorText(text: error).padding(.vertical, 4)
+        }
     }
 
     @ViewBuilder

@@ -741,7 +741,14 @@ struct LocalCodexAppServerDataSource: CodexAppServerDataSource {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
-        if let codexHome { process.environment = ProcessInfo.processInfo.environment.merging(["CODEX_HOME": codexHome.path]) { _, new in new } }
+        if let codexHome {
+            var environment = ProcessInfo.processInfo.environment
+            for key in ["OPENAI_API_KEY", "OPENAI_BASE_URL", "CODEX_ACCESS_TOKEN", "CODEX_ID_TOKEN", "CODEX_REFRESH_TOKEN"] {
+                environment.removeValue(forKey: key)
+            }
+            environment["CODEX_HOME"] = codexHome.path
+            process.environment = environment
+        }
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output

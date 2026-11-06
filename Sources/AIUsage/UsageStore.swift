@@ -2,6 +2,58 @@ import Foundation
 import SwiftUI
 import ServiceManagement
 
+protocol ManagedAccountQuotaFetching: Sendable {
+    func fetch(provider: Provider, account: ManagedAccountRecord) async throws -> UsageSnapshot
+}
+
+struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
+    private let claudeCredentialStore: any ManagedClaudeCredentialStoring
+    private let httpLoader: any HTTPDataLoading
+
+    init(
+        claudeCredentialStore: any ManagedClaudeCredentialStoring = KeychainManagedClaudeCredentialStore(),
+        httpLoader: any HTTPDataLoading = URLSessionDataLoader()
+    ) {
+        self.claudeCredentialStore = claudeCredentialStore
+        self.httpLoader = httpLoader
+    }
+
+    func fetch(provider: Provider, account: ManagedAccountRecord) async throws -> UsageSnapshot {
+        switch provider {
+        case .codex:
+            let home = URL(fileURLWithPath: account.sessionReference, isDirectory: true)
+            return try await CodexProvider(source: LocalCodexAppServerDataSource(codexHome: home)).fetch()
+        case .claude:
+            guard let keychainID = ClaudeCodeCredentialVault.accountID(from: account.sessionReference) else {
+                throw ClaudeCodeSessionError.invalidReference
+            }
+            let storedCredential = try claudeCredentialStore.load(accountID: keychainID)
+            var credential = storedCredential
+            credential = try await ClaudeCodeCredentialVault.refreshedCredential(from: credential, using: httpLoader)
+            if credential != storedCredential {
+                try claudeCredentialStore.save(credential, accountID: keychainID)
+            }
+            let token = try ClaudeCodeCredentialVault.accessToken(from: credential)
+            do {
+                return try await ClaudeProvider(loader: httpLoader, fetchProfile: false, tokenProvider: { token }).fetch()
+            } catch let failure as ProviderFailure {
+                guard case .http(401) = failure else { throw failure }
+                let refreshed = try await ClaudeCodeCredentialVault.refreshedCredential(
+                    from: credential, using: httpLoader, force: true
+                )
+                guard refreshed != credential else { throw failure }
+                try claudeCredentialStore.save(refreshed, accountID: keychainID)
+                let refreshedToken = try ClaudeCodeCredentialVault.accessToken(from: refreshed)
+                return try await ClaudeProvider(
+                    loader: httpLoader, fetchProfile: false, tokenProvider: { refreshedToken }
+                ).fetch()
+            }
+        default:
+            throw ProviderFailure.process("Account-specific quota is not supported for this provider.")
+        }
+    }
+}
+
 @MainActor @Observable final class UsageStore {
     var snapshots: [Provider: UsageSnapshot] = [:]
     var refreshing: Set<Provider> = []
@@ -51,6 +103,14 @@ import ServiceManagement
     private(set) var lastRefreshAttempt: Date?
     private(set) var codexAccounts: [ManagedAccountRecord] = []
     private(set) var codexInUseAccountID: String?
+    private(set) var claudeCodeAccounts: [ManagedAccountRecord] = []
+    private(set) var claudeCodeInUseAccountID: String?
+    var managedAccountSnapshots: [Provider: [String: UsageSnapshot]] = [:]
+    var managedAccountErrors: [Provider: [String: String]] = [:]
+    var managedAccountStatuses: [Provider: [String: ProviderStatus]] = [:]
+    var refreshingManagedAccounts: Set<String> = []
+    private(set) var accountSessionActionInFlight = false
+    @ObservationIgnored private var pendingManagedAccountActivations: [String: Provider] = [:]
     var codexAccountError: String?
     var codexAccountActionInFlight = false
     private(set) var antigravityAccounts: [AntigravityAccount] = []
@@ -64,9 +124,11 @@ import ServiceManagement
     var claudeDesktopAppRunning = false
 
     @ObservationIgnored private let codexAccountManager: DurableAccountSessionManager
+    @ObservationIgnored private let claudeCodeAccountManager: DurableAccountSessionManager
     @ObservationIgnored private let antigravityAccountManager: DurableAccountSessionManager
     @ObservationIgnored private let claudeDesktopAccountManager: DurableAccountSessionManager
     @ObservationIgnored private let providers: [any UsageProvider]
+    @ObservationIgnored private let accountQuotaFetcher: any ManagedAccountQuotaFetching
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let cacheURL: URL
     @ObservationIgnored private var timer: Task<Void, Never>?
@@ -108,11 +170,14 @@ import ServiceManagement
         codexLiveHomeURL: URL? = nil,
         codexSpareRootURL: URL? = nil,
         codexIndexURL: URL? = nil,
+        claudeCodeAccountManager: DurableAccountSessionManager? = nil,
         antigravityAccountManager: DurableAccountSessionManager? = nil,
+        accountQuotaFetcher: any ManagedAccountQuotaFetching = LocalManagedAccountQuotaFetcher(),
         autoStartRunner: any UsageWindowStartCommandRunning = LocalUsageWindowStartCommandRunner(),
         quotaDeliverer: any QuotaNotificationDelivering = UserNotificationQuotaDeliverer()
     ) {
         self.providers = providers
+        self.accountQuotaFetcher = accountQuotaFetcher
         self.defaults = defaults
         self.cacheURL = cacheURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/AIUsage/snapshots.json")
@@ -121,6 +186,11 @@ import ServiceManagement
         let spare = codexSpareRootURL ?? home.appendingPathComponent(".ai-usage/accounts/codex-sessions", isDirectory: true)
         let indexURL = codexIndexURL ?? home.appendingPathComponent("Library/Application Support/AIUsage/account-sessions.json")
         self.codexAccountManager = codexAccountManager ?? CodexSessionAdapter(liveHomeURL: live, spareRootURL: spare, indexURL: indexURL).manager
+        let claudeConfig = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
+            .map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath, isDirectory: true) }
+            ?? home.appendingPathComponent(".claude", isDirectory: true)
+        self.claudeCodeAccountManager = claudeCodeAccountManager
+            ?? ClaudeCodeSessionAdapter(configDirectory: claudeConfig, indexURL: indexURL).manager
         self.antigravityAccountManager = antigravityAccountManager ?? AntigravityAccountVault.managedSessionAdapter(indexURL: indexURL, defaults: defaults)
         self.claudeDesktopAccountManager = ClaudeDesktopSessionAdapter(
             liveDataURL: home.appendingPathComponent("Library/Application Support/Claude", isDirectory: true),
@@ -165,6 +235,7 @@ import ServiceManagement
         }
         migrateLegacyCodexAccounts()
         refreshCodexAccountIndex()
+        refreshClaudeCodeAccountIndex()
         publishWidgetSnapshot()
         launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
         schedule()
@@ -202,6 +273,7 @@ import ServiceManagement
     }
 
     func refresh(provider requestedProvider: Provider? = nil) async {
+        if accountSessionActionInFlight { return }
         let selectedProviders = providers.filter {
             visibleProviders.contains($0.provider)
                 && (requestedProvider == nil || $0.provider == requestedProvider)
@@ -212,8 +284,14 @@ import ServiceManagement
         refreshing.formUnion(selectedProviders.map(\.provider))
         await withTaskGroup(of: (Provider, Result<UsageSnapshot, ProviderFailure>).self) { group in
             for provider in selectedProviders {
+                let accountManager = provider.provider == .codex ? codexAccountManager
+                    : provider.provider == .claude ? claudeCodeAccountManager : nil
                 group.addTask {
-                    do { return (provider.provider, .success(try await provider.fetch())) }
+                    do {
+                        let operationLease = try accountManager?.acquireOperationLock()
+                        defer { if let operationLease { withExtendedLifetime(operationLease) {} } }
+                        return (provider.provider, .success(try await provider.fetch()))
+                    }
                     catch let failure as ProviderFailure { return (provider.provider, .failure(failure)) }
                     catch { return (provider.provider, .failure(.network("Could not refresh usage. Try again."))) }
                 }
@@ -512,6 +590,121 @@ import ServiceManagement
     func registerCurrentCodexLogin() { performCodexAccountAction { _ = try self.codexAccountManager.registerCurrentAccount(label: nil) } }
     func stashCodexActiveSession() { performCodexAccountAction { _ = try self.codexAccountManager.stashActiveSession() } }
     func activateCodexAccount(_ id: String) { performCodexAccountAction { try self.codexAccountManager.activateAccount(id) } }
+
+    func saveCurrentAccount(for provider: Provider) throws {
+        guard !accountSessionActionInFlight, refreshing.isDisjoint(with: [.claude, .codex]), refreshingManagedAccounts.isEmpty else {
+            throw AccountSessionError.lockFailed
+        }
+        accountSessionActionInFlight = true
+        defer { accountSessionActionInFlight = false }
+        switch provider {
+        case .codex:
+            _ = try codexAccountManager.stashActiveSession()
+            refreshCodexAccountIndex()
+        case .claude:
+            _ = try claudeCodeAccountManager.stashActiveSession()
+            refreshClaudeCodeAccountIndex()
+        default:
+            throw AccountSessionError.unidentified
+        }
+    }
+
+    @discardableResult
+    func importAccount(for provider: Provider, reference: String, fingerprint: String, label: String?) throws -> ManagedAccountRecord {
+        guard !accountSessionActionInFlight, !refreshing.contains(provider), refreshingManagedAccounts.isEmpty else {
+            throw AccountSessionError.lockFailed
+        }
+        accountSessionActionInFlight = true
+        defer { accountSessionActionInFlight = false }
+        switch provider {
+        case .codex:
+            let account = try codexAccountManager.importSession(reference: reference, fingerprint: fingerprint, label: label)
+            refreshCodexAccountIndex()
+            return account
+        case .claude:
+            let account = try claudeCodeAccountManager.importSession(reference: reference, fingerprint: fingerprint, label: label)
+            refreshClaudeCodeAccountIndex()
+            return account
+        default:
+            throw AccountSessionError.unidentified
+        }
+    }
+
+    func activateManagedAccount(for provider: Provider, id: String) async {
+        guard !accountSessionActionInFlight, refreshing.isDisjoint(with: [.claude, .codex]) else { return }
+        if refreshingManagedAccounts.contains(id) {
+            pendingManagedAccountActivations[id] = provider
+            return
+        }
+        accountSessionActionInFlight = true
+        defer { accountSessionActionInFlight = false }
+        do {
+            switch provider {
+            case .codex:
+                let accountLease = try codexAccountManager.acquireAccountLock(id)
+                defer { withExtendedLifetime(accountLease) {} }
+                try codexAccountManager.activateAccount(id)
+                refreshCodexAccountIndex()
+            case .claude:
+                let accountLease = try claudeCodeAccountManager.acquireAccountLock(id)
+                defer { withExtendedLifetime(accountLease) {} }
+                try claudeCodeAccountManager.activateAccount(id)
+                refreshClaudeCodeAccountIndex()
+            default: return
+            }
+            accountSessionActionInFlight = false
+            await refresh(provider: provider)
+        } catch {
+            managedAccountErrors[provider, default: [:]][id] = error.localizedDescription
+        }
+    }
+
+    func refreshManagedAccountQuota(for provider: Provider, accountID: String) async {
+        guard !accountSessionActionInFlight, refreshing.isDisjoint(with: [.claude, .codex]), !refreshingManagedAccounts.contains(accountID) else { return }
+        let records = provider == .codex ? codexAccounts : claudeCodeAccounts
+        guard let account = records.first(where: { $0.id == accountID }) else { return }
+        refreshingManagedAccounts.insert(accountID)
+        defer {
+            refreshingManagedAccounts.remove(accountID)
+            if let pendingProvider = pendingManagedAccountActivations.removeValue(forKey: accountID) {
+                Task { await self.activateManagedAccount(for: pendingProvider, id: accountID) }
+            }
+        }
+        do {
+            let manager = provider == .codex ? codexAccountManager : claudeCodeAccountManager
+            let accountLease = try manager.acquireAccountLock(accountID)
+            defer { withExtendedLifetime(accountLease) {} }
+            let fetched = try await accountQuotaFetcher.fetch(provider: provider, account: account)
+            var scoped = fetched
+            scoped.accountID = accountID
+            managedAccountSnapshots[provider, default: [:]][accountID] = scoped
+            managedAccountErrors[provider, default: [:]][accountID] = nil
+            managedAccountStatuses[provider, default: [:]][accountID] = scoped.status
+        } catch let failure as ProviderFailure {
+            managedAccountErrors[provider, default: [:]][accountID] = failure.localizedDescription
+            managedAccountStatuses[provider, default: [:]][accountID] = failure.status
+        } catch {
+            managedAccountErrors[provider, default: [:]][accountID] = error.localizedDescription
+            managedAccountStatuses[provider, default: [:]][accountID] = .error
+        }
+    }
+
+    func refreshManagedAccountQuotas() async {
+        let work = [(Provider.codex, codexAccounts), (.claude, claudeCodeAccounts)]
+        for (provider, accounts) in work {
+            for account in accounts { await refreshManagedAccountQuota(for: provider, accountID: account.id) }
+        }
+    }
+
+    private func refreshClaudeCodeAccountIndex() {
+        do {
+            let index = try claudeCodeAccountManager.currentIndex()
+            claudeCodeAccounts = index.accounts.filter { $0.tool == .claudeCode }
+            claudeCodeInUseAccountID = index.inUse[.claudeCode]
+        } catch {
+            managedAccountErrors[.claude, default: [:]]["index"] = error.localizedDescription
+        }
+    }
 
     private func performCodexAccountAction(_ action: () throws -> Void) {
         guard !codexAccountActionInFlight, !refreshing.contains(.codex) else { return }
