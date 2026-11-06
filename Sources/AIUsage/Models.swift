@@ -542,15 +542,18 @@ enum UsageParsing {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderFailure.invalidResponse("Claude returned malformed usage data.")
         }
-        let source = (root["utilization"] as? [String: Any])
-            ?? (root["rate_limits"] as? [String: Any])
-            ?? (root["rateLimits"] as? [String: Any])
-            ?? root
+        let sources = [
+            root["utilization"] as? [String: Any],
+            root["rate_limits"] as? [String: Any],
+            root["rateLimits"] as? [String: Any],
+            root
+        ].compactMap { $0 }
         var result: [UsageWindow] = []
         for (key, label) in [("five_hour", "5-hour limit"), ("seven_day", "Weekly limit"), ("seven_day_sonnet", "Sonnet weekly"), ("seven_day_opus", "Opus weekly")] {
-            guard let item = source[key] as? [String: Any],
-                  let amount = number(item["utilization"] ?? item["used_percentage"] ?? item["usedPercentage"]) else { continue }
-            result.append(UsageWindow(label: label, utilization: amount, resetsAt: date(item["resets_at"] ?? item["resetsAt"])))
+            let items = sources.compactMap { $0[key] as? [String: Any] }
+            guard let amount = items.compactMap({ number($0["utilization"] ?? $0["used_percentage"] ?? $0["usedPercentage"]) }).first else { continue }
+            let reset = items.compactMap { date(resetValue(in: $0)) }.first
+            result.append(UsageWindow(label: label, utilization: amount, resetsAt: reset))
         }
         if let limits = limitItems(root["limits"]) {
             for (limit, keyedKind) in limits {
@@ -567,8 +570,20 @@ enum UsageParsing {
                     label = name.map { "\($0) weekly" } ?? "Model weekly"
                 default: continue
                 }
-                if result.contains(where: { $0.label == label }) { continue }
-                result.append(UsageWindow(label: label, utilization: amount, resetsAt: date(limit["resets_at"] ?? limit["resetsAt"])))
+                let reset = date(resetValue(in: limit))
+                if let existingIndex = result.firstIndex(where: { $0.label == label }) {
+                    let existing = result[existingIndex]
+                    if existing.resetsAt == nil, let reset {
+                        result[existingIndex] = UsageWindow(
+                            label: existing.label,
+                            utilization: existing.utilization,
+                            resetsAt: reset,
+                            detail: existing.detail
+                        )
+                    }
+                    continue
+                }
+                result.append(UsageWindow(label: label, utilization: amount, resetsAt: reset))
             }
         }
         if let extraUsage = root["extra_usage"] as? [String: Any],
@@ -602,6 +617,11 @@ enum UsageParsing {
             guard let item = value as? [String: Any] else { return nil }
             return (item, key)
         }
+    }
+
+    private static func resetValue(in item: [String: Any]) -> Any? {
+        item["resets_at"] ?? item["resetsAt"] ?? item["reset_at"] ?? item["resetAt"]
+            ?? item["reset_time"] ?? item["resetTime"]
     }
 
     private static func money(_ value: Double, currency: String) -> String {
@@ -674,7 +694,14 @@ enum UsageParsing {
     private static func date(_ value: Any?) -> Date? {
         if let seconds = value as? NSNumber { return Date(timeIntervalSince1970: seconds.doubleValue) }
         guard let string = value as? String else { return nil }
-        let formatter = ISO8601DateFormatter()
-        return formatter.date(from: string) ?? formatter.date(from: string + "Z")
+        for options: ISO8601DateFormatter.Options in [
+            [.withInternetDateTime, .withFractionalSeconds],
+            [.withInternetDateTime]
+        ] {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = options
+            if let date = formatter.date(from: string) ?? formatter.date(from: string + "Z") { return date }
+        }
+        return nil
     }
 }

@@ -23,7 +23,7 @@ import Darwin
 
     var body: some Scene {
         MenuBarExtra {
-            UsagePopover()
+            CompactPopoverView()
                 .environment(store)
                 .environmentObject(updateManager)
                 .environment(\.locale, store.locale)

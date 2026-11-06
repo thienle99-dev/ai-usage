@@ -30,6 +30,26 @@ final class ParserTests: XCTestCase {
         XCTAssertNotNil(windows[1].resetsAt)
     }
 
+    func testClaudeMergesResetFromDuplicateLimitsEntry() throws {
+        let data = Data(#"{"utilization":{"five_hour":{"utilization":9},"seven_day":{"utilization":43}},"limits":[{"kind":"session","percent":9,"resets_at":"2026-11-06T14:30:00Z"},{"kind":"weekly_all","percent":43,"resets_at":"2026-11-09T08:00:00Z"}]}"#.utf8)
+        let windows = try UsageParsing.claude(data)
+        let session = try XCTUnwrap(windows.first { $0.label == "5-hour limit" })
+        let weekly = try XCTUnwrap(windows.first { $0.label == "Weekly limit" })
+
+        XCTAssertEqual(session.utilization, 9)
+        XCTAssertEqual(weekly.utilization, 43)
+        XCTAssertEqual(session.resetsAt, ISO8601DateFormatter().date(from: "2026-11-06T14:30:00Z"))
+        XCTAssertEqual(weekly.resetsAt, ISO8601DateFormatter().date(from: "2026-11-09T08:00:00Z"))
+    }
+
+    func testClaudeParsesFractionalResetTimestamp() throws {
+        let data = Data(#"{"five_hour":{"utilization":9,"resets_at":"2026-11-06T14:30:00.123Z"}}"#.utf8)
+        let window = try XCTUnwrap(UsageParsing.claude(data).first)
+
+        let expected = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-11-06T14:30:00Z")).addingTimeInterval(0.123)
+        XCTAssertEqual(window.resetsAt?.timeIntervalSince1970 ?? 0, expected.timeIntervalSince1970, accuracy: 0.001)
+    }
+
     func testClaudeExtraUsageCreditsPayload() throws {
         let data = Data(#"{"five_hour":null,"seven_day":null,"extra_usage":{"is_enabled":true,"monthly_limit":6000,"used_credits":40,"utilization":null,"currency":"USD"}}"#.utf8)
         let window = try XCTUnwrap(UsageParsing.claude(data).first)

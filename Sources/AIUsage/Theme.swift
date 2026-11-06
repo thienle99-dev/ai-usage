@@ -92,3 +92,57 @@ enum UsageTheme {
         })
     }
 }
+
+/// Colors used only by the compact menu bar popover. Keeping these separate
+/// from the dashboard palette prevents the popover's brand colors from
+/// changing other screens.
+enum PopoverColorTokens {
+    static func primaryText(colorScheme: ColorScheme, increasedContrast: Bool) -> Color {
+        if increasedContrast { return Color(nsColor: .labelColor) }
+        return colorScheme == .dark ? hex("F7F6F3") : hex("252522")
+    }
+
+    static func secondaryText(colorScheme: ColorScheme, increasedContrast: Bool) -> Color {
+        if increasedContrast { return Color(nsColor: .secondaryLabelColor) }
+        return colorScheme == .dark ? hex("C2C1BB") : hex("62645F")
+    }
+
+    static func providerIcon(_ provider: Provider, colorScheme: ColorScheme) -> Color {
+        switch provider {
+        case .claude: hex("D97757")
+        // This teal is an app UI accent, not an official OpenAI brand color.
+        case .codex: colorScheme == .dark ? hex("70C9B7") : hex("167A70")
+        default: UsageTheme.provider(provider)
+        }
+    }
+
+    static func selectedIndicator(_ provider: Provider, colorScheme: ColorScheme) -> Color {
+        switch provider {
+        case .claude: colorScheme == .dark ? hex("E29A7D") : hex("B95232")
+        case .codex: colorScheme == .dark ? hex("70C9B7") : hex("167A70")
+        default: UsageTheme.provider(provider)
+        }
+    }
+
+    static func rowHoverTint(_ provider: Provider, colorScheme: ColorScheme) -> Color {
+        // Opaque fills avoid adding a translucent layer over the native popover surface.
+        switch provider {
+        case .claude: colorScheme == .dark ? hex("48342E") : hex("F7E7DF")
+        case .codex: colorScheme == .dark ? hex("23453F") : hex("E0F0EC")
+        default: Color(nsColor: .unemphasizedSelectedContentBackgroundColor)
+        }
+    }
+
+    static var separator: Color { Color(nsColor: .separatorColor) }
+
+    private static func hex(_ value: String) -> Color {
+        let rgb = Int(value, radix: 16) ?? 0
+        return Color(
+            .sRGB,
+            red: Double((rgb >> 16) & 0xff) / 255,
+            green: Double((rgb >> 8) & 0xff) / 255,
+            blue: Double(rgb & 0xff) / 255,
+            opacity: 1
+        )
+    }
+}

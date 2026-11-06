@@ -249,18 +249,43 @@ struct ClaudeDesktopSessionAdapter {
     }
 
     private static func moveSessionItems(from source: URL, to destination: URL, fileManager fm: FileManager) throws {
+        // Validate every source and destination before the first rename. In
+        // particular, reject nested symlinks so securing the parked tree can
+        // never follow a link out of the account folder.
+        var moves: [(source: URL, destination: URL)] = []
         for item in itemPaths {
             let from = source.appendingPathComponent(item)
-            guard fm.fileExists(atPath: from.path) else { continue }
-            let sourceAttributes = try fm.attributesOfItem(atPath: from.path)
-            if (sourceAttributes[.type] as? FileAttributeType) == .typeSymbolicLink {
-                throw ClaudeDesktopSessionError.linkedFolder
-            }
+            guard pathExistsIncludingLinks(from) else { continue }
+            try validateSessionTree(at: from, fileManager: fm)
             let to = destination.appendingPathComponent(item)
-            if fm.fileExists(atPath: to.path) { throw ClaudeDesktopSessionError.recoveryFailed }
+            if pathExistsIncludingLinks(to) { throw ClaudeDesktopSessionError.recoveryFailed }
+            moves.append((from, to))
+        }
+        for (from, to) in moves {
             try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try fm.moveItem(at: from, to: to)
         }
+    }
+
+    private static func validateSessionTree(at root: URL, fileManager fm: FileManager) throws {
+        func attributes(_ url: URL) throws -> stat {
+            var info = stat()
+            guard lstat(url.path, &info) == 0 else { throw ClaudeDesktopSessionError.unreadableSession }
+            guard (info.st_mode & S_IFMT) != S_IFLNK else { throw ClaudeDesktopSessionError.linkedFolder }
+            return info
+        }
+
+        let rootAttributes = try attributes(root)
+        guard (rootAttributes.st_mode & S_IFMT) == S_IFDIR else { return }
+        guard let enumerator = fm.enumerator(at: root, includingPropertiesForKeys: nil, options: []) else {
+            throw ClaudeDesktopSessionError.unreadableSession
+        }
+        for case let item as URL in enumerator { _ = try attributes(item) }
+    }
+
+    private static func pathExistsIncludingLinks(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0
     }
 
     private static var itemPaths: [String] {
