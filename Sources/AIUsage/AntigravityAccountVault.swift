@@ -7,7 +7,10 @@ struct AntigravityAccount: Codable, Identifiable, Equatable, Sendable {
     var identity: String
     var addedAt: Date
 
-    var displayName: String { identity.isEmpty ? NSLocalizedString("Antigravity account", comment: "") : identity }
+    var displayName: String {
+        AntigravityCredentials.emailOnlyIdentity(identity)
+            ?? NSLocalizedString("Antigravity account", comment: "")
+    }
 }
 
 struct AntigravityStoredCredentialSelection: Sendable {
@@ -154,6 +157,8 @@ enum AntigravityAccountVault {
         do {
             return try AIUsageCredentialVault.data(for: credentialKey(id)) {
                 try legacyCredentialData(id: id)
+            } deletingLegacy: {
+                try AIUsageCredentialVault.deleteLegacyData(service: keychainService, account: id)
             }
         } catch let CredentialVaultError.keychain(status) {
             throw AntigravityAccountVaultError.keychain(status)

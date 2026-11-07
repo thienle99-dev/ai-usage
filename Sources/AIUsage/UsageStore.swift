@@ -35,7 +35,9 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
             }
             let token = try ClaudeCodeCredentialVault.accessToken(from: credential)
             do {
-                return try await ClaudeProvider(loader: httpLoader, fetchProfile: false, tokenProvider: { token }).fetch()
+                var snapshot = try await ClaudeProvider(loader: httpLoader, fetchProfile: false, tokenProvider: { token }).fetch()
+                snapshot.account = ClaudeCodeSessionAdapter.label(storedCredential, fallback: account.label)
+                return snapshot
             } catch let failure as ProviderFailure {
                 guard case .http(401) = failure else { throw failure }
                 let refreshed = try await ClaudeCodeCredentialVault.refreshedCredential(
@@ -44,9 +46,11 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
                 guard refreshed != credential else { throw failure }
                 try claudeCredentialStore.save(refreshed, accountID: keychainID)
                 let refreshedToken = try ClaudeCodeCredentialVault.accessToken(from: refreshed)
-                return try await ClaudeProvider(
+                var snapshot = try await ClaudeProvider(
                     loader: httpLoader, fetchProfile: false, tokenProvider: { refreshedToken }
                 ).fetch()
+                snapshot.account = ClaudeCodeSessionAdapter.label(refreshed, fallback: account.label)
+                return snapshot
             }
         default:
             throw ProviderFailure.process("Account-specific quota is not supported for this provider.")

@@ -22,7 +22,7 @@ import SwiftUI
             for: .claude,
             reference: String(decoding: session, as: UTF8.self),
             fingerprint: identity,
-            label: snapshot.account ?? ClaudeCodeSessionAdapter.label(session)
+            label: ClaudeCodeSessionAdapter.label(session) ?? snapshot.account
         )
     }
 }

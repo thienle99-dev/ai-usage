@@ -50,12 +50,24 @@ struct ClaudeCodeSessionAdapter {
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func label(_ data: Data) -> String? {
+    static func label(_ data: Data, fallback: String? = nil) -> String? {
         let (credential, metadata) = ClaudeCodeCredentialVault.sessionParts(data)
         let oauth = credential["claudeAiOauth"] as? [String: Any] ?? credential
         let account = metadata["oauthAccount"] as? [String: Any] ?? metadata
-        return (account["email"] as? String) ?? (account["accountEmail"] as? String)
+        let storedIdentity = (account["email"] as? String) ?? (account["accountEmail"] as? String)
             ?? (oauth["email"] as? String) ?? (oauth["accountEmail"] as? String)
+        let fallbackIdentity = fallback?.components(separatedBy: " · ").first
+        let identity = storedIdentity ?? fallbackIdentity
+        let subscriptionType = (oauth["subscriptionType"] as? String)
+            ?? (account["subscriptionType"] as? String)
+            ?? (account["subscription_type"] as? String)
+        let rateLimitTier = (oauth["rateLimitTier"] as? String)
+            ?? (account["organizationRateLimitTier"] as? String)
+            ?? (account["rate_limit_tier"] as? String)
+        let plan = UsageParsing.claudePlan(subscriptionType: subscriptionType, rateLimitTier: rateLimitTier)
+        guard let identity else { return fallback }
+        guard let plan else { return storedIdentity ?? fallback }
+        return "\(identity) · \(plan)"
     }
 
     private static func jwtClaims(_ token: String) -> [String: Any]? {
@@ -137,6 +149,8 @@ enum ClaudeCodeCredentialVault {
         do {
             guard let data = try AIUsageCredentialVault.data(for: managedCredentialKey(accountID), migrating: {
                 try readIfExists(service: managedService, account: accountID)
+            }, deletingLegacy: {
+                try AIUsageCredentialVault.deleteLegacyData(service: managedService, account: accountID)
             }) else {
                 throw ClaudeCodeSessionError.keychain(errSecItemNotFound)
             }

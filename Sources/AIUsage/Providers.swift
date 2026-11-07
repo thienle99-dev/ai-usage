@@ -76,7 +76,10 @@ struct ClaudeProvider: UsageProvider {
             }
             guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
             let windows = try UsageParsing.claude(data)
-            let account = fetchProfile ? await ClaudeAccountLookup.shared.account(for: token, using: loader) : nil
+            let subscriptionType = ClaudeCredentials.subscriptionType(matchingAccessToken: token)
+            let account = fetchProfile
+                ? await ClaudeAccountLookup.shared.account(for: token, subscriptionType: subscriptionType, using: loader)
+                : nil
             return UsageSnapshot(provider: .claude, windows: windows, account: account, lastSuccess: .now)
         }
         throw ProviderFailure.http(429)
@@ -85,11 +88,14 @@ struct ClaudeProvider: UsageProvider {
 
 private actor ClaudeAccountLookup {
     static let shared = ClaudeAccountLookup()
-    private var cached: (fingerprint: String, value: String, expiresAt: Date)?
+    private var cached: (fingerprint: String, subscriptionType: String?, value: String, expiresAt: Date)?
 
-    func account(for token: String, using loader: any HTTPDataLoading) async -> String? {
+    func account(for token: String, subscriptionType: String?, using loader: any HTTPDataLoading) async -> String? {
         let fingerprint = SHA256.hash(data: Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
-        if let cached, cached.fingerprint == fingerprint, cached.expiresAt > .now { return cached.value }
+        if let cached,
+           cached.fingerprint == fingerprint,
+           cached.subscriptionType == subscriptionType,
+           cached.expiresAt > .now { return cached.value }
         var request = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/profile")!)
         request.httpMethod = "GET"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -99,13 +105,45 @@ private actor ClaudeAccountLookup {
         request.timeoutInterval = 8
         guard let (data, response) = try? await loader.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let value = UsageParsing.claudeAccount(data) else { return nil }
-        cached = (fingerprint, value, .now.addingTimeInterval(6 * 60 * 60))
+              let value = UsageParsing.claudeAccount(data, subscriptionType: subscriptionType) else { return nil }
+        cached = (fingerprint, subscriptionType, value, .now.addingTimeInterval(6 * 60 * 60))
         return value
     }
 }
 
 enum ClaudeCredentials {
+    static func subscriptionType(matchingAccessToken token: String) -> String? {
+        if let environmentToken = ProcessInfo.processInfo.environment["CLAUDE_CODE_OAUTH_TOKEN"],
+           environmentToken.trimmingCharacters(in: .whitespacesAndNewlines) == token {
+            return nil
+        }
+        let directory = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude", isDirectory: true)
+
+        let file = directory.appendingPathComponent(".credentials.json")
+        let fileData = try? Data(contentsOf: file)
+        var candidates = [fileData].compactMap { $0 }
+        if let fileData {
+            let (credential, _) = ClaudeCodeCredentialVault.sessionParts(fileData)
+            let oauth = credential["claudeAiOauth"] as? [String: Any] ?? credential
+            if oauth["accessToken"] as? String == token {
+                return (oauth["subscriptionType"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        if fileData != nil { return nil }
+        if let keychainData = try? ClaudeCodeCredentialVault.nativeCredential(configDirectory: directory) {
+            candidates.append(keychainData)
+        }
+        for data in candidates {
+            let (credential, _) = ClaudeCodeCredentialVault.sessionParts(data)
+            let oauth = credential["claudeAiOauth"] as? [String: Any] ?? credential
+            guard oauth["accessToken"] as? String == token else { continue }
+            return (oauth["subscriptionType"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return nil
+    }
+
     static func accessToken() throws -> String {
         if let raw = ProcessInfo.processInfo.environment["CLAUDE_CODE_OAUTH_TOKEN"] {
             let token = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -266,6 +304,8 @@ enum CopilotCredentialVault {
     private static func read() -> String? {
         guard let data = try? AIUsageCredentialVault.data(for: "copilot/oauth-token", migrating: {
             try AIUsageCredentialVault.legacyData(service: service, account: account)
+        }, deletingLegacy: {
+            try AIUsageCredentialVault.deleteLegacyData(service: service, account: account)
         }) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -556,6 +596,8 @@ enum OpenCodeCredentialVault {
     private static func read() -> String? {
         guard let data = try? AIUsageCredentialVault.data(for: "opencode/cookie-header", migrating: {
             try AIUsageCredentialVault.legacyData(service: service, account: account)
+        }, deletingLegacy: {
+            try AIUsageCredentialVault.deleteLegacyData(service: service, account: account)
         }) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -650,6 +692,8 @@ enum CursorCredentialVault {
     private static func storedCookie() -> String? {
         guard let data = try? AIUsageCredentialVault.data(for: "cursor/cookie-header", migrating: {
             try AIUsageCredentialVault.legacyData(service: service, account: keyAccount)
+        }, deletingLegacy: {
+            try AIUsageCredentialVault.deleteLegacyData(service: service, account: keyAccount)
         }) else { return nil }
         return String(data: data, encoding: .utf8)
     }

@@ -1,21 +1,33 @@
 import Foundation
 import Security
 
-/// Stores credentials owned by AIUsage in one Keychain item. Existing
-/// provider-specific items are copied lazily and retained as rollback copies.
+/// Stores credentials owned by AIUsage in one Keychain item. Legacy
+/// provider-specific items are removed after their values are verified here.
 enum AIUsageCredentialVault {
     private static let service = "com.aiusagemonitor.shared-credentials"
     private static let account = "provider-credentials-v1"
     private static let lock = CredentialVaultLock()
 
-    static func data(for key: String, migrating legacyValue: () throws -> Data? = { nil }) throws -> Data? {
+    static func data(
+        for key: String,
+        migrating legacyValue: () throws -> Data? = { nil },
+        deletingLegacy: () throws -> Void = {}
+    ) throws -> Data? {
         try withLock {
             var values = try readValues()
-            if let value = values[key] { return value }
+            if let value = values[key] {
+                try? deletingLegacy()
+                return value
+            }
             guard let legacy = try legacyValue() else { return nil }
             values[key] = legacy
-            do { try writeValues(values) }
-            catch { return legacy }
+            do {
+                try writeValues(values)
+                guard try readValues()[key] == legacy else { return legacy }
+            } catch {
+                return legacy
+            }
+            try? deletingLegacy()
             return legacy
         }
     }
