@@ -1,0 +1,17 @@
+---
+import { withBase } from '../lib/paths';
+
+interface Props {
+  name: string;
+  alt: string;
+  width: number;
+  height: number;
+  class?: string;
+}
+
+const { name, alt, width, height, class: className = '' } = Astro.props;
+const cls = `h-auto w-full rounded-2xl border border-white/10 shadow-[0_24px_60px_rgba(0,0,0,0.35)] ${className}`;
+---
+
+<img src={withBase(`images/${name}-dark.png`)} alt={alt} width={width} height={height} loading="lazy" decoding="async" class={`shot-dark ${cls}`} />
+<img src={withBase(`images/${name}-light.png`)} alt={alt} width={width} height={height} loading="lazy" decoding="async" class={`shot-light ${cls}`} />

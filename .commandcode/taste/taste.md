@@ -1,0 +1,4 @@
+- Prefers minimal diffs, edits only requested files, and preserves existing uncommitted/concurrent changes (re-reads files before editing); uses 4-space indentation, no new dependencies, and no code formatter. Confidence: 0.9
+- Avoids git commit/push/stash/reset actions and verifies Swift changes with `swift build` and `swift test`. Confidence: 0.9
+- Wants final reports to list changed files and the exact commands run, plainly noting anything not verified. Confidence: 0.8
+- Never logs API keys or stores them in preferences/fixtures. Confidence: 0.9

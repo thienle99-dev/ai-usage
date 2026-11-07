@@ -617,6 +617,93 @@ final class ProviderAndStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAntigravitySignInOpensTerminalAndImportsNewSession() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexURL = root.appendingPathComponent("account-index.json")
+        let live = LockedAccountFixture(reference: "live-agy", fingerprint: "agy-live")
+        let agyManager = DurableAccountSessionManager(
+            tool: .antigravity, indexURL: indexURL, identify: { live.read() },
+            stage: { source, id in "agy-\(id)-\(source)" }, activate: { _ in }
+        )
+        let suite = UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!
+        let store = UsageStore(
+            providers: [], defaults: suite, startImmediately: false,
+            codexIndexURL: indexURL, antigravityAccountManager: agyManager
+        )
+        var key = "old@example.com"
+        var launchedScript: URL?
+        var cleared = false
+        var scriptText = ""
+        let coordinator = AccountLoginCoordinator(
+            store: store, processLauncher: FakeAccountLoginProcessLauncher(),
+            draftRootURL: root.appendingPathComponent("drafts"),
+            cliExecutable: { _ in URL(fileURLWithPath: "/fake/it's agy") },
+            terminalLauncher: { url in
+                launchedScript = url
+                scriptText = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+            },
+            antigravitySessionKey: { key },
+            antigravitySessionClearer: { cleared = true },
+            antigravityPollInterval: .milliseconds(10)
+        )
+
+        coordinator.select(.antigravity)
+        coordinator.beginSignIn()
+        XCTAssertTrue(coordinator.isRunning)
+        for _ in 0..<200 where coordinator.phase != .signingIn { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertEqual(coordinator.phase, .signingIn)
+        XCTAssertTrue(cleared)
+        XCTAssertTrue(scriptText.contains("exec '/fake/it'\\''s agy'"), scriptText)
+        let script = try XCTUnwrap(launchedScript)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: script.path))
+
+        key = "new@example.com"
+        for _ in 0..<200 where coordinator.phase == .signingIn || coordinator.phase == .verifying {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertNotEqual(coordinator.phase, .signingIn)
+        XCTAssertFalse(coordinator.isRunning)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: script.path))
+    }
+
+    @MainActor
+    func testAntigravitySignInCancelRemovesScript() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexURL = root.appendingPathComponent("account-index.json")
+        let live = LockedAccountFixture(reference: "live-agy", fingerprint: "agy-live")
+        let agyManager = DurableAccountSessionManager(
+            tool: .antigravity, indexURL: indexURL, identify: { live.read() },
+            stage: { source, id in "agy-\(id)-\(source)" }, activate: { _ in }
+        )
+        let store = UsageStore(
+            providers: [], defaults: UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!, startImmediately: false,
+            codexIndexURL: indexURL, antigravityAccountManager: agyManager
+        )
+        var launchedScript: URL?
+        let coordinator = AccountLoginCoordinator(
+            store: store, processLauncher: FakeAccountLoginProcessLauncher(),
+            draftRootURL: root.appendingPathComponent("drafts"),
+            cliExecutable: { _ in URL(fileURLWithPath: "/fake/agy") },
+            terminalLauncher: { launchedScript = $0 },
+            antigravitySessionKey: { "same@example.com" },
+            antigravitySessionClearer: {},
+            antigravityPollInterval: .milliseconds(10)
+        )
+
+        coordinator.select(.antigravity)
+        coordinator.beginSignIn()
+        for _ in 0..<200 where coordinator.phase != .signingIn { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(coordinator.phase, .signingIn)
+
+        await coordinator.cancel()
+        XCTAssertEqual(coordinator.phase, .cancelled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(launchedScript).path))
+    }
+
+    @MainActor
     func testSaveCurrentAccountActionPreservesClaudeAndCodexSessions() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

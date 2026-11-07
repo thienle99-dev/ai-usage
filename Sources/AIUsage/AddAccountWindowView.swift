@@ -8,6 +8,7 @@ struct AddAccountWindowView: View {
     @State private var code = ""
     @State private var saveRowHovered = false
     @State private var signInRowHovered = false
+    @State private var openAntigravityRowHovered = false
 
     private var providerAccent: Color {
         switch login.provider {
@@ -37,10 +38,19 @@ struct AddAccountWindowView: View {
 
                 if login.provider == .antigravity {
                     actionRow(
-                        title: "Open Antigravity",
-                        description: "Switch Google accounts in Antigravity, then save the signed-in account here.",
+                        title: "Sign in to another account",
+                        description: "Save the current account, then sign in with Antigravity CLI in Terminal.",
                         symbol: "rectangle.portrait.and.arrow.right",
                         isHovered: $signInRowHovered,
+                        action: login.beginSignIn
+                    )
+                    .disabled(login.isRunning)
+                    .accessibilityIdentifier("add-account-sign-in-another")
+                    actionRow(
+                        title: "Open Antigravity",
+                        description: "Switch Google accounts in Antigravity, then save the signed-in account here.",
+                        symbol: "macwindow",
+                        isHovered: $openAntigravityRowHovered,
                         action: openAntigravity
                     )
                     .accessibilityIdentifier("add-account-open-antigravity")

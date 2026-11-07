@@ -3,6 +3,7 @@ import type { Messages } from '../lib/i18n';
 import { withVersion } from '../lib/i18n';
 import { dmgAssetUrl } from '../lib/downloads';
 import { withBase } from '../lib/paths';
+import ThemedShot from './ThemedShot.astro';
 
 interface Props {
   t: Messages;
@@ -48,37 +49,9 @@ const { t, releasesHref, repo } = Astro.props;
       </div>
       <p class="font-mono mt-4 text-xs text-mist/70">{withVersion(t.hero.versionNote)}</p>
     </div>
-    <div class="animate-rise animate-rise-delay-1" role="img" aria-label={t.hero.pillAria}>
-      <div class="mx-auto w-fit rounded-2xl border border-white/10 bg-white/5 px-10 py-2.5 backdrop-blur">
-        <span class="rounded-full bg-teal px-3 py-1 text-sm font-bold text-on-accent [font-variant-numeric:tabular-nums]">
-          <span class="mr-1 text-xs">✦</span>42%
-        </span>
-      </div>
-      <div class="mx-auto mt-4 w-full max-w-sm rounded-2xl border border-white/10 bg-panel/80 p-5 shadow-[0_24px_60px_rgba(0,0,0,0.45)] backdrop-blur">
-        <div class="mb-4 flex items-center gap-2.5">
-          <span
-            class="font-mono inline-flex h-7 w-7 items-center justify-center rounded-lg bg-teal/15 text-[0.65rem] font-bold text-teal-bright"
-          >
-            &gt;_
-          </span>
-          <span class="text-sm font-bold text-white">
-            {t.hero.cardTitle}
-            <small class="block text-xs font-normal text-mist">{t.hero.cardAccount}</small>
-          </span>
-          <span class="ml-auto flex items-center gap-1.5 text-xs text-mist">
-            <i class="h-1.5 w-1.5 rounded-full bg-teal"></i>{t.hero.cardStatus}
-          </span>
-        </div>
-        <div class="mt-2.5 flex justify-between text-[0.83rem]">
-          <span class="text-fog">5-hour limit</span><b class="text-teal-bright [font-variant-numeric:tabular-nums]">42%</b>
-        </div>
-        <div class="mt-1.5 h-1.5 rounded-full bg-white/10"><i class="block h-full w-[42%] rounded-full bg-teal"></i></div>
-        <div class="mt-2.5 flex justify-between text-[0.83rem]">
-          <span class="text-fog">Weekly limit</span><b class="text-teal-bright [font-variant-numeric:tabular-nums]">18%</b>
-        </div>
-        <div class="mt-1.5 h-1.5 rounded-full bg-white/10"><i class="block h-full w-[18%] rounded-full bg-teal"></i></div>
-      </div>
-      <p class="mt-3 text-center text-xs text-mist/60">{t.hero.mockNote}</p>
+    <div class="animate-rise animate-rise-delay-1 mx-auto w-full max-w-[19rem]">
+      <ThemedShot name="popover" alt={t.showcase.popoverAlt} width={610} height={1000} />
+      <p class="mt-3 text-center text-xs text-mist/60">{t.showcase.sampleNote}</p>
     </div>
   </div>
 </section>

@@ -1,6 +1,18 @@
 # AI Usage Monitor
 
-A native macOS 14+ menu bar app for checking AI coding provider usage. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, the local Codex app-server protocol, and Sparkle for signed in-app updates.
+A native macOS 14+ menu bar app for checking AI coding provider usage at a glance. It supports Claude, Codex, Cursor, Copilot, Gemini, Antigravity, Grok, OpenCode, and Command Code, and can keep several Claude, Codex, and Antigravity accounts side by side. The app uses SwiftUI, Foundation networking, the macOS Keychain APIs, the local Codex app-server protocol, and Sparkle for signed in-app updates. On macOS 26 the popover uses the Liquid Glass material; earlier versions fall back to a standard blur.
+
+## Screenshots
+
+Images use sample data, not real accounts.
+
+| Popover (light) | Popover (dark) |
+| --- | --- |
+| <img src="docs/images/popover-light.png" width="320" alt="Popover in light mode"> | <img src="docs/images/popover-dark.png" width="320" alt="Popover in dark mode"> |
+
+Add an Antigravity account:
+
+<img src="docs/images/add-account-antigravity-light.png" width="420" alt="Add Account window for Antigravity">
 
 ## Build and run
 
@@ -35,14 +47,15 @@ curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install
 
 The installer downloads the latest Apple silicon release archive. Set `AI_USAGE_INSTALL_DIR` to choose a different install folder. These commands require a published GitHub release with the stable `AI-Usage-Monitor-macos-arm64.zip` asset; see [release instructions](docs/RELEASING.md).
 
-
-The app is an agent-style menu bar app, so it has no Dock icon. Open Settings from the popover gear button. Settings include General, Appearance, Providers, and About tabs.
+The app is an agent-style menu bar app, so it has no Dock icon. Open Settings from the popover gear button. Settings include General, Menu Bar, Accounts, Providers, Integrations, Appearance, and About tabs.
 
 In **Settings → Appearance → Language**, choose the system language, English, or Tiếng Việt. **Settings → About → Updates** provides a manual update check in signed release builds; Sparkle also checks on its normal schedule. Releases publish a signed appcast at [GitHub Releases](https://github.com/thienle99-dev/ai-usage/releases/latest/download/appcast.xml). See [release instructions](docs/RELEASING.md) for signing setup.
 
 ## Usage and refresh
 
-The popover shows provider cards with the usage windows actually returned by the provider. Percentages outside 0–100 or missing percentages are treated as unavailable; the app does not invent values. The single menu bar item can follow the provider selected in the dashboard, the enabled provider with highest usage, or a recognized foreground app. The switcher lives beside the card layout options in the popover. Existing icon-only, combined, per-provider, critical-only, and fixed-provider displays remain available in Menu Bar settings. Foreground detection uses app identity only; when no provider app is recognized, it falls back to the selected provider and then highest usage.
+The popover lists every enabled provider with a one-line summary and its usage windows, as returned by the provider. Percentages outside 0–100 or missing percentages are treated as unavailable; the app does not invent values. Providers with several saved accounts show them as rows you can switch between.
+
+The menu bar item has four display modes in **Settings → Menu Bar**: icon only, combined usage (the default), a single chosen provider, or the provider of the active app. Active-app detection uses app identity only; when no provider app is recognized it falls back to the chosen provider and then the highest usage. A previously saved mode that no longer exists falls back to combined usage.
 
 The packaged app includes a macOS 14+ WidgetKit widget in small and medium sizes. Add **AI Usage Quota** from the macOS widget gallery to the desktop or Notification Center. It shows cached data for enabled providers and updates when the app refreshes; the widget never calls provider APIs. The widget uses the first valid usage window returned by each provider in the app's standard provider order. The shared container uses `group.com.local.aiusage`; distribution signing must register this App Group and sign the host app and widget with the same team. The local packaging script uses ad-hoc signing.
 
@@ -58,17 +71,26 @@ Cursor usage uses Cursor's session-authenticated `GET https://cursor.com/api/usa
 
 OpenCode usage uses the authenticated `opencode.ai` dashboard server functions to discover a workspace and read its rolling five-hour and weekly subscription usage. Add a browser Cookie header in Settings; only `auth`, `__Host-auth`, and `__Host-console_session` values are kept, in macOS Keychain. OpenCode's dashboard API and cookies are undocumented and may change. OpenCode Go and pay-as-you-go spend are not included in this provider yet. See [CodexBar's OpenCode provider notes](research/CodexBar/docs/opencode.md).
 
+Command Code usage reads the API key from `~/.commandcode/auth.json` (written by `cmd login`) and calls Command Code's billing and usage endpoints (`/alpha/whoami`, `/alpha/billing/credits`, `/alpha/billing/subscriptions`, `/alpha/usage/summary`). It shows the monthly credits used, the 5-hour and weekly limits, the request count for the current period, days until renewal, and the signed-in email and plan. The request count is best-effort and omitted if that endpoint fails.
+
+Antigravity usage reads the Antigravity CLI (`agy`) session from the shared Keychain item `gemini` / `antigravity` or `~/.gemini/antigravity-cli/antigravity-oauth-token`, and calls the Code Assist quota endpoints. The account identity comes from the token's email, including the top-level `id_token_email` field written by the CLI. macOS asks for permission the first time AI Usage reads that Keychain item, because the CLI owns it; choose **Always Allow** to avoid repeated prompts.
+
 These provider endpoints/protocols are compatibility-sensitive and may change. Re-authenticate with the relevant CLI when the provider reports an authentication error. If Codex is unavailable, confirm `codex` is installed and can start `app-server`. If Claude usage is unavailable, sign in with Claude Code and try Refresh.
 
-## Add a Codex account from the CLI
+## Multiple accounts
 
-After initializing **Settings → Providers → Codex homes**, add another account without replacing the active one:
+Use the add-account button in the popover (or **Add account…** in **Settings → Accounts**) to keep more than one login per provider. Saved credentials live in the macOS Keychain, not in preferences or logs.
+
+- **Claude and Codex:** save the current login, or sign in to another account in an isolated session without replacing the active one. The sign-in runs the installed CLI in a temporary config folder and imports the result when it finishes.
+- **Antigravity:** the CLI has no login command and uses a single shared Keychain item, so it cannot be isolated. **Sign in to another account** saves the current account, signs `agy` out, opens Terminal running `agy`, and imports the new account as soon as the session changes. If you cancel before finishing, `agy` stays signed out until you switch back to a saved account from the popover. **Open Antigravity** is the alternative: switch Google accounts in the Antigravity app, then save the signed-in account.
+
+From the command line, add a Codex account without replacing the active one:
 
 ```sh
 ./scripts/ai-usage codex login
 ```
 
-The command runs the installed Codex CLI interactively with a new `CODEX_HOME` under `~/.ai-usage/accounts/codex/`. A successful login registers that home for switching in Settings or from the dashboard. The command requires `codex` on `PATH`; interrupted or failed login attempts leave their new folder in place and do not register it.
+The command runs the installed Codex CLI interactively with a new `CODEX_HOME` under `~/.ai-usage/accounts/codex/`. A successful login registers that home for switching in the app. It requires `codex` on `PATH`; interrupted or failed attempts leave their new folder in place and do not register it.
 
 ## Quota-aware CLI preflight
 
@@ -125,7 +147,7 @@ In **Settings → General → Claude Code Context Mode**, install the official C
 
 ## Token and cost report
 
-Open **Token & Cost Report…** from the dashboard layout menu to scan local Claude Code and Codex JSONL usage logs. The scan runs only when requested and reads token counts plus model, date, project folder, and session ID; it does not display or save message text. Reports can group by day, provider, model, project, or session. Claude Code's local `costUSD` is shown as an estimate, not billing data. Codex session logs do not provide billing cost here, so cost remains unavailable for Codex. Other providers expose quota but not per-request token usage to this app.
+Open **Token & Cost Report…** from the popover menu to scan local Claude Code and Codex JSONL usage logs. The scan runs only when requested and reads token counts plus model, date, project folder, and session ID; it does not display or save message text. Reports can group by day, provider, model, project, or session. Claude Code's local `costUSD` is shown as an estimate, not billing data. Codex session logs do not provide billing cost here, so cost remains unavailable for Codex. Other providers expose quota but not per-request token usage to this app.
 
 The formatter can also be used by compatible shell prompts and hooks:
 

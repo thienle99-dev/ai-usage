@@ -259,3 +259,8 @@
 		transition: none;
 	}
 }
+
+/* Theme-aware screenshots: show the dark image by default, the light one in the light theme. */
+.shot-light { display: none; }
+.theme-light .shot-light { display: block; }
+.theme-light .shot-dark { display: none; }

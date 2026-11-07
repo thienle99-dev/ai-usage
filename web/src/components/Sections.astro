@@ -1,5 +1,6 @@
 ---
 import type { Messages } from '../lib/i18n';
+import ThemedShot from './ThemedShot.astro';
 
 interface Props {
   t: Messages;
@@ -36,18 +37,34 @@ const tagTone: Record<string, string> = {
   </div>
 </section>
 
+<section id="accounts" class="mx-auto max-w-6xl scroll-mt-20 px-4 pt-16 sm:px-8">
+  <div data-reveal>
+    <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.showcase.eyebrow}</p>
+    <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.showcase.title}</h2>
+    <p class="mt-2 max-w-2xl text-mist">{t.showcase.subtitle}</p>
+  </div>
+  <div data-reveal class="mt-7 grid items-center gap-8 rounded-2xl border border-white/10 bg-panel/70 p-5 sm:p-8 lg:grid-cols-[0.9fr_1.1fr]">
+    <div>
+      <h3 class="font-display text-lg font-bold text-white">{t.showcase.accountTitle}</h3>
+      <p class="mt-2 text-sm leading-relaxed text-mist">{t.showcase.accountDetail}</p>
+      <p class="mt-3 text-xs text-mist/60">{t.showcase.sampleNote}</p>
+    </div>
+    <ThemedShot name="add-account-antigravity" alt={t.showcase.accountAlt} width={860} height={560} />
+  </div>
+</section>
+
 <section id="providers" class="mx-auto max-w-6xl scroll-mt-20 px-4 pt-16 sm:px-8">
   <div data-reveal>
     <p class="font-mono text-xs font-semibold uppercase tracking-[0.18em] text-teal-bright">{t.providers.eyebrow}</p>
     <h2 class="font-display mt-2 text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">{t.providers.title}</h2>
     <p class="mt-2 max-w-2xl text-mist">{t.providers.subtitle}</p>
   </div>
-  <div class="mt-7 grid gap-4 sm:grid-cols-2">
+  <div class="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
     {
       t.providers.items.map((p, i) => (
         <div
           data-reveal
-          data-reveal-delay={(i % 2) * 90}
+          data-reveal-delay={(i % 3) * 90}
           class="interactive-lift rounded-2xl border border-white/10 bg-panel/70 p-5 hover:border-teal/40"
         >
           <span class={`mb-2.5 inline-block rounded-full px-2.5 py-0.5 text-xs font-semibold ${tagTone[p.color] ?? tagTone.muted}`}>

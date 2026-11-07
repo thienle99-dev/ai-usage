@@ -173,3 +173,11 @@
 "Claude Code token refresh returned an invalid response." = "Phản hồi làm mới token Claude Code không hợp lệ.";
 "%d days to renew" = "%d ngày nữa gia hạn";
 "1 day to renew" = "1 ngày nữa gia hạn";
+"Save the current account, then sign in with Antigravity CLI in Terminal." = "Lưu tài khoản hiện tại, rồi đăng nhập bằng Antigravity CLI trong Terminal.";
+"Saving the current Antigravity account…" = "Đang lưu tài khoản Antigravity hiện tại…";
+"The current Antigravity account could not be saved." = "Không thể lưu tài khoản Antigravity hiện tại.";
+"Sign in with a different Google account in the Terminal window." = "Hãy đăng nhập bằng tài khoản Google khác trong cửa sổ Terminal.";
+"Account added. Antigravity CLI is now signed in with it." = "Đã thêm tài khoản. Antigravity CLI hiện đang dùng tài khoản này.";
+"The new Antigravity account could not be saved." = "Không thể lưu tài khoản Antigravity mới.";
+"Terminal.app could not be found." = "Không tìm thấy Terminal.app.";
+"Antigravity CLI (agy) not found. Install it, then try again." = "Không tìm thấy Antigravity CLI (agy). Hãy cài đặt rồi thử lại.";

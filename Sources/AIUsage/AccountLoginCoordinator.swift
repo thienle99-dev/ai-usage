@@ -52,17 +52,30 @@ enum ManagedLoginPhase: Equatable {
     @ObservationIgnored private let sessionVerifier: any AccountLoginSessionVerifying
     @ObservationIgnored private let draftRootURL: URL
     @ObservationIgnored private let cliExecutable: (Provider) throws -> URL
+    @ObservationIgnored private let terminalLauncher: (URL) throws -> Void
+    @ObservationIgnored private let antigravitySessionKey: () -> String?
+    @ObservationIgnored private let antigravitySessionClearer: () -> Void
+    @ObservationIgnored private let antigravityPollInterval: Duration
+    @ObservationIgnored private var antigravityScriptURL: URL?
 
-    var isRunning: Bool { process != nil || phase == .verifying || phase == .saving }
+    var isRunning: Bool { process != nil || [.signingIn, .verifying, .saving].contains(phase) }
 
     init(
         store: UsageStore,
         processLauncher: any AccountLoginProcessLaunching = FoundationAccountLoginProcessLauncher(),
         sessionVerifier: any AccountLoginSessionVerifying = LocalAccountLoginSessionVerifier(),
         draftRootURL: URL? = nil,
-        cliExecutable: ((Provider) throws -> URL)? = nil
+        cliExecutable: ((Provider) throws -> URL)? = nil,
+        terminalLauncher: ((URL) throws -> Void)? = nil,
+        antigravitySessionKey: (() -> String?)? = nil,
+        antigravitySessionClearer: (() -> Void)? = nil,
+        antigravityPollInterval: Duration = .seconds(2)
     ) {
         self.store = store
+        self.terminalLauncher = terminalLauncher ?? { try Self.openInTerminal($0) }
+        self.antigravitySessionKey = antigravitySessionKey ?? { AntigravityCredentials.currentLiveSessionKey() }
+        self.antigravitySessionClearer = antigravitySessionClearer ?? { AntigravityCredentials.clearLiveSession() }
+        self.antigravityPollInterval = antigravityPollInterval
         self.processLauncher = processLauncher
         self.sessionVerifier = sessionVerifier
         self.draftRootURL = draftRootURL ?? Self.defaultDraftRoot()
@@ -128,6 +141,10 @@ enum ManagedLoginPhase: Equatable {
 
     func beginSignIn() {
         guard !isRunning, phase != .interrupted else { return }
+        if provider == .antigravity {
+            beginAntigravitySignIn()
+            return
+        }
         do {
             let executable = try cliExecutable(provider)
             let directory = draftRootURL.appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
@@ -177,6 +194,103 @@ enum ManagedLoginPhase: Equatable {
             cleanupDraft()
             phase = timedOut ? .failed(String(localized: "Sign-in timed out. Try again.")) : .cancelled
         }
+    }
+
+    /// Antigravity CLI has no login command and shares one Keychain item, so it cannot be isolated like
+    /// Claude or Codex. Keep the current account, let `agy` sign in on the real session in Terminal, then
+    /// import the account it ends up with.
+    private func beginAntigravitySignIn() {
+        do {
+            let executable = try cliExecutable(.antigravity)
+            userCancelled = false
+            timedOut = false
+            loginURL = nil
+            requestsCode = false
+            phase = .saving
+            message = String(localized: "Saving the current Antigravity account…")
+            timeoutTask = Task { [weak self] in await self?.runAntigravitySignIn(executable: executable) }
+        } catch {
+            phase = .failed(error.localizedDescription)
+        }
+    }
+
+    private func runAntigravitySignIn(executable: URL) async {
+        var savedCurrent = true
+        if !(await store.addCurrentAntigravityAccount()) {
+            savedCurrent = false
+            if store.antigravityAccountError == AccountSessionError.unidentified.errorDescription {
+                store.antigravityAccountError = nil
+            } else {
+                phase = .failed(store.antigravityAccountError ?? String(localized: "The current Antigravity account could not be saved."))
+                return
+            }
+        }
+        // Read the real CLI session from here on, not a saved account that happens to be active.
+        await store.switchAntigravityAccount(to: nil)
+        // `agy` skips its login screen while a session exists, so sign it out, but only once the
+        // account is safely saved and can be switched back to from the popover.
+        if savedCurrent { antigravitySessionClearer() }
+        let baseline = antigravitySessionKey()
+        do {
+            let script = try writeAntigravityScript(executable: executable)
+            antigravityScriptURL = script
+            try terminalLauncher(script)
+        } catch {
+            cleanupDraft()
+            phase = .failed(error.localizedDescription)
+            return
+        }
+        phase = .signingIn
+        message = String(localized: "Sign in with a different Google account in the Terminal window.")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(600))
+        while !Task.isCancelled {
+            if ContinuousClock.now >= deadline {
+                await cancel(timedOut: true)
+                return
+            }
+            try? await Task.sleep(for: antigravityPollInterval)
+            guard !Task.isCancelled else { return }
+            if let key = antigravitySessionKey(), key != baseline {
+                await finishAntigravitySignIn()
+                return
+            }
+        }
+    }
+
+    private func finishAntigravitySignIn() async {
+        phase = .verifying
+        message = String(localized: "Verifying account…")
+        let saved = await store.addCurrentAntigravityAccount()
+        removeAntigravityScript()
+        if saved {
+            phase = .succeeded
+            message = String(localized: "Account added. Antigravity CLI is now signed in with it.")
+        } else {
+            phase = .failed(store.antigravityAccountError ?? String(localized: "The new Antigravity account could not be saved."))
+        }
+        reloadAccounts()
+    }
+
+    private func writeAntigravityScript(executable: URL) throws -> URL {
+        try FileManager.default.createDirectory(at: draftRootURL, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let url = draftRootURL.appendingPathComponent("antigravity-sign-in-\(UUID().uuidString.lowercased()).command")
+        let quotedPath = "'" + executable.path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let script = "#!/bin/zsh\nprintf '\\nSign in with the NEW Antigravity account, then return to AI Usage.\\n\\n'\nexec \(quotedPath)\n"
+        try Data(script.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+        return url
+    }
+
+    private func removeAntigravityScript() {
+        if let url = antigravityScriptURL { try? FileManager.default.removeItem(at: url) }
+        antigravityScriptURL = nil
+    }
+
+    private static func openInTerminal(_ script: URL) throws {
+        guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+            throw ProviderFailure.process(String(localized: "Terminal.app could not be found."))
+        }
+        NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
     private func launch(executable: URL, directory: URL) {
@@ -278,6 +392,7 @@ enum ManagedLoginPhase: Equatable {
 
     private func cleanupDraft() {
         timeoutTask?.cancel()
+        removeAntigravityScript()
         if let directory = draftDirectory {
             if provider == .claude { ClaudeCodeCredentialVault.removeTemporary(configDirectory: directory) }
             try? FileManager.default.removeItem(at: directory)
@@ -308,16 +423,26 @@ enum ManagedLoginPhase: Equatable {
     private static func removeDraft(root: URL) { try? FileManager.default.removeItem(at: draftURL(root: root)) }
 
     private static func findCLI(for provider: Provider) throws -> URL {
-        let name = provider == .claude ? "claude" : "codex"
+        let name: String
+        switch provider {
+        case .claude: name = "claude"
+        case .antigravity: name = "agy"
+        default: name = "codex"
+        }
         let paths = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { String($0) + "/\(name)" }
             + ["/opt/homebrew/bin/\(name)", "/usr/local/bin/\(name)", FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/\(name)").path]
         guard let path = paths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
-            throw ProviderFailure.process(String(localized: provider == .claude ? "Claude CLI not found." : "Codex CLI not found."))
+            switch provider {
+            case .claude: throw ProviderFailure.process(String(localized: "Claude CLI not found."))
+            case .antigravity: throw ProviderFailure.process(String(localized: "Antigravity CLI (agy) not found. Install it, then try again."))
+            default: throw ProviderFailure.process(String(localized: "Codex CLI not found."))
+            }
         }
         return URL(fileURLWithPath: path)
     }
 
     private static func confirmCLI(_ executable: URL, provider: Provider) throws {
+        if provider == .antigravity { return }
         let loginHelp = try help(executable, arguments: provider == .claude ? ["auth", "login", "--help"] : ["login", "--help"])
         let rootHelp = try help(executable, arguments: ["--help"])
         if provider == .claude {

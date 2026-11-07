@@ -27,14 +27,19 @@ export type Messages = {
     viewSource: string;
     /** Use `{version}` placeholder. */
     versionNote: string;
-    pillAria: string;
-    cardTitle: string;
-    cardAccount: string;
-    cardStatus: string;
-    mockNote: string;
   };
   providers: { eyebrow: string; title: string; subtitle: string; items: ProviderItem[] };
   features: { eyebrow: string; title: string; subtitle: string; items: FeatureItem[] };
+  showcase: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    popoverAlt: string;
+    accountAlt: string;
+    accountTitle: string;
+    accountDetail: string;
+    sampleNote: string;
+  };
   privacy: { eyebrow: string; title: string; subtitle: string; rows: string[][]; principles: string[] };
   install: {
     eyebrow: string;
@@ -78,7 +83,7 @@ const en: Messages = {
     name: 'AI Usage Monitor',
     tagline: 'Every AI coding limit, in your menu bar.',
     description:
-      'A native macOS menu bar app that tracks Claude Code, Codex, Cursor, Copilot and OpenCode usage quotas with reset countdowns.',
+      'A native macOS menu bar app that tracks Claude Code, Codex, Cursor, Antigravity, Command Code and more, with multiple accounts and reset countdowns.',
   },
   nav: {
     features: 'Features',
@@ -95,52 +100,26 @@ const en: Messages = {
     titleA: 'Every AI coding limit,',
     titleB: 'in your menu bar.',
     subtitle:
-      'Live usage percentages, reset countdowns and threshold alerts for the AI coding tools you already pay for. Read-only by design — it reuses your existing CLI logins and never stores a token.',
+      'Live usage percentages, reset countdowns and threshold alerts for the AI coding tools you already pay for. It reuses your existing CLI logins, supports several accounts per provider, and keeps credentials in Keychain.',
     download: 'Download',
     viewReleases: 'See releases',
     viewSource: 'Source code',
     versionNote: 'v{version} · macOS arm64',
-    pillAria: 'Menu bar preview showing highest usage at 42 percent',
-    cardTitle: 'OpenAI Codex',
-    cardAccount: 'you@example.com · Plus',
-    cardStatus: 'Connected',
-    mockNote: 'Interface mock-up rendered in CSS',
   },
   providers: {
     eyebrow: 'Providers',
     title: 'Providers',
-    subtitle: 'One monitor, every quota that matters. Each integration reads the login you already have.',
+    subtitle: 'Nine providers, one popover. Each integration reuses the login you already have.',
     items: [
-      {
-        name: 'Claude Code',
-        color: 'claude',
-        source: 'OAuth usage endpoint',
-        detail: 'Session, weekly and model-scoped windows plus usage credits. Reads CLAUDE_CODE_OAUTH_TOKEN, ~/.claude credentials or the login Keychain item.',
-      },
-      {
-        name: 'Codex',
-        color: 'codex',
-        source: 'Local app-server (JSON-RPC)',
-        detail: '5-hour and weekly rate limits with resets. Spawns the Codex CLI you installed; supports multiple homes with one-click folder-swap switching.',
-      },
-      {
-        name: 'Cursor',
-        color: 'muted',
-        source: 'Local app session, read-only',
-        detail: 'Reads Cursor.app’s signed-in session from its local database without modifying it. Optional cursor.com cookie fallback in Keychain.',
-      },
-      {
-        name: 'Copilot',
-        color: 'muted',
-        source: 'GitHub device flow',
-        detail: 'Connect your GitHub account with device authorization. The token lives in Keychain, never in the app.',
-      },
-      {
-        name: 'OpenCode',
-        color: 'muted',
-        source: 'Dashboard session cookie',
-        detail: 'Paste a dashboard Cookie header once; only OpenCode auth cookies are kept in Keychain.',
-      },
+      { name: 'Claude Code', color: 'claude', source: 'OAuth usage endpoint', detail: 'Session, weekly and model-scoped windows plus usage credits. Multiple accounts with isolated sign-in.' },
+      { name: 'Codex', color: 'codex', source: 'Local app-server (JSON-RPC)', detail: '5-hour and weekly limits with resets. Runs the Codex CLI you installed; add accounts without replacing the active one.' },
+      { name: 'Cursor', color: 'muted', source: 'Local app session, read-only', detail: 'Plan usage, Auto/API breakdown and billing-cycle end from Cursor.app’s signed-in session. Optional cookie fallback.' },
+      { name: 'Antigravity', color: 'muted', source: 'Antigravity CLI session', detail: 'Per-account quota windows from the agy session. Add another Google account straight from the app.' },
+      { name: 'Command Code', color: 'muted', source: 'Command Code API', detail: 'Monthly credits, 5-hour and weekly limits, request count, days to renew, plus your email and plan.' },
+      { name: 'Copilot', color: 'muted', source: 'GitHub device flow', detail: 'Connect GitHub with device authorization. The token lives in Keychain.' },
+      { name: 'Gemini', color: 'muted', source: 'Gemini CLI login', detail: 'Quota from the Gemini CLI login you already created.' },
+      { name: 'Grok', color: 'muted', source: 'Local session', detail: 'Usage from your existing Grok sign-in, read-only.' },
+      { name: 'OpenCode', color: 'muted', source: 'Dashboard session cookie', detail: 'Paste a dashboard Cookie header once; only OpenCode auth cookies are kept in Keychain.' },
     ],
   },
   features: {
@@ -148,64 +127,58 @@ const en: Messages = {
     title: 'Features',
     subtitle: 'Small surface, thoughtful behavior.',
     items: [
-      {
-        title: 'Live menu bar',
-        detail: 'A single status item can follow the selected provider, highest usage, or recognized foreground app. Icon-only, combined, per-provider, critical-only, and fixed-provider displays remain available.',
-      },
-      {
-        title: 'Warning thresholds',
-        detail: 'Set warning and critical percentages. Cards, bars and the menu bar shift from provider color to amber to red.',
-      },
-      {
-        title: 'Reset countdowns',
-        detail: 'Every window shows when it resets — relative by default with the exact time one hover away.',
-      },
-      {
-        title: 'Codex account switching',
-        detail: 'Register multiple Codex homes and swap the live one from Settings. Only folders move; credentials are never touched.',
-      },
-      {
-        title: 'Honest stale states',
-        detail: 'Failures keep your last good snapshot, clearly labeled stale with the error — never a silent zero.',
-      },
-      {
-        title: 'Launch at login',
-        detail: 'Starts with your Mac and refreshes on a schedule you choose: 1 to 15 minutes, or manual only.',
-      },
-      {
-        title: 'Light and dark themes',
-        detail: 'The website follows your system appearance by default. Switch themes from the header and your choice is remembered for future visits.',
-      },
-      {
-        title: 'Terminal and JSON',
-        detail: 'Query cached quota or aggregate local Claude Code and Codex token logs from shell scripts, tmux, and Starship. JSON output has stable fields; quota queries never refresh providers.',
-      },
+      { title: 'Liquid Glass popover', detail: 'A compact popover that uses the macOS 26 Liquid Glass material and falls back to a standard blur on earlier versions.' },
+      { title: 'Multiple accounts', detail: 'Keep several Claude, Codex and Antigravity logins side by side and switch from the popover. Credentials stay in Keychain.' },
+      { title: 'Live menu bar', detail: 'Four modes: icon only, combined usage, a single provider, or the provider of the app you are using.' },
+      { title: 'Warning thresholds', detail: 'Set warning and critical percentages. Bars and the menu bar shift from provider color to amber to red.' },
+      { title: 'Reset countdowns', detail: 'Every window shows when it resets, relative by default with the exact time one hover away.' },
+      { title: 'Honest stale states', detail: 'Failures keep your last good snapshot, clearly labeled stale with the error. Never a silent zero.' },
+      { title: 'Launch at login', detail: 'Starts with your Mac and refreshes every 1 to 15 minutes, or only when you ask.' },
+      { title: 'Terminal and JSON', detail: 'Query cached quota or aggregate local Claude Code and Codex token logs from shell scripts, tmux and Starship. Quota queries never refresh providers.' },
+      { title: 'English and Tiếng Việt', detail: 'The app and this site switch between English and Vietnamese, and follow your light or dark appearance.' },
     ],
+  },
+  showcase: {
+    eyebrow: 'Accounts',
+    title: 'One popover, every account',
+    subtitle: 'Add a second login without signing out of the first.',
+    popoverAlt: 'AI Usage popover listing Codex, Claude Code, Cursor, Google Antigravity and Command Code usage',
+    accountAlt: 'Add Account window for Antigravity with save, sign in and open actions',
+    accountTitle: 'Sign in to another Antigravity account',
+    accountDetail: 'The app saves the current account, signs the CLI out, opens Terminal running agy, and imports the new account as soon as you finish. Switch back any time from the popover.',
+    sampleNote: 'Screenshots use sample data.',
   },
   privacy: {
     eyebrow: 'Privacy',
     title: 'Privacy',
-    subtitle: 'Read-only by design. Nothing leaves your Mac.',
+    subtitle: 'Read-only where possible. Nothing leaves your Mac except the provider requests themselves.',
     rows: [
-      ['Claude Code', 'OAuth token from env, ~/.claude, or login Keychain. Read, never written or cached.'],
+      ['Claude Code', 'OAuth token from env, ~/.claude or the login Keychain. Read, never logged or cached.'],
       ['Codex', 'Local app-server protocol. Auth files are never opened by the app.'],
       ['Cursor', 'Local session database opened read-only. Optional cookie lives in Keychain.'],
+      ['Antigravity', 'agy session read from its Keychain item or token file. macOS asks once; choose Always Allow.'],
+      ['Command Code', 'API key read from ~/.commandcode/auth.json and sent only to api.commandcode.ai.'],
       ['Copilot', 'GitHub device-flow token in Keychain.'],
       ['OpenCode', 'Dashboard session cookies in Keychain.'],
+      ['Saved accounts', 'Extra accounts are stored in the macOS Keychain, never in preferences or logs.'],
     ],
     principles: [
       'No passwords or tokens in preferences, logs, screenshots or the app bundle.',
-      'Provider endpoints are unofficial and may change — the app degrades to clear unavailable states.',
-      'Snapshots cached locally under ~/Library/Application Support/AIUsage; credentials never cached.',
+      'Provider endpoints are unofficial and may change. The app degrades to clear unavailable states.',
+      'Snapshots are cached locally under ~/Library/Application Support/AIUsage; credentials are never cached.',
     ],
   },
   install: {
     eyebrow: 'Install',
     title: 'Install',
-    subtitle: 'Install the macOS app from a disk image.',
-    requirements: 'Requires macOS 14 or later. Sign in to each provider CLI first to connect its account.',
-    steps: ['Download the latest DMG from the button above or Releases.', 'Open the DMG, then drag AI Usage Monitor to Applications.', 'Open the app and enable providers in Settings.'],
-    commands: [],
+    subtitle: 'Choose Homebrew, a shell installer, or a disk image.',
+    requirements: 'Requires macOS 14 or later. Homebrew and the shell installer currently support Apple silicon.',
+    steps: ['Install the latest release with Homebrew:', 'Or install from Terminal:', 'Or install manually from a disk image:'],
+    commands: [
+      'brew tap thienle99-dev/ai-usage https://github.com/thienle99-dev/ai-usage\nbrew install --cask thienle99-dev/ai-usage/ai-usage-monitor',
+      'curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install.sh | sh',
+      'Download the latest DMG from the button above or Releases, then drag AI Usage Monitor to Applications.',
+    ],
     binaries: 'If macOS blocks the first launch, Control-click the app, choose Open, then confirm.',
     autoUpdateTitle: 'Automatic updates',
     autoUpdate: 'Sparkle checks for updates automatically and prompts you when one is available. You can also check in Settings → About → Updates.',
@@ -215,26 +188,12 @@ const en: Messages = {
     eyebrow: 'FAQ',
     title: 'FAQ',
     items: [
-      {
-        q: 'Does it store my tokens?',
-        a: 'No. It reads the logins your CLIs already created, keeps nothing credential-like in preferences or logs, and never writes back to provider files (Codex account switching only moves folders).',
-      },
-      {
-        q: 'Why is my data marked stale?',
-        a: 'A refresh failed — network, expired auth, or a changed endpoint. The last good snapshot stays visible with its age and the error, and the next scheduled refresh retries automatically.',
-      },
-      {
-        q: 'How do I switch Codex accounts?',
-        a: 'Register each Codex home folder once in Settings → Providers → Codex homes, then press “Make active”. The app swaps the folders into ~/.codex and refreshes.',
-      },
-      {
-        q: 'The numbers disagree with my CLI. Why?',
-        a: 'Provider endpoints are unofficial and evolve. Usage windows, scopes and reset semantics can differ between the OAuth/API view and the CLI view. Unknown payloads show as unavailable rather than guessed.',
-      },
-      {
-        q: 'Which macOS versions work?',
-        a: 'macOS Sonoma (14) and later, Apple Silicon and Intel.',
-      },
+      { q: 'Does it store my tokens?', a: 'It reads the logins your CLIs already created and keeps nothing credential-like in preferences or logs. Accounts you add are kept in the macOS Keychain.' },
+      { q: 'How do I add a second account?', a: 'Use the + button in the popover. Claude Code and Codex sign in to an isolated session. For Antigravity, “Sign in to another account” saves the current one, opens Terminal with agy, and imports the new account when you finish.' },
+      { q: 'Why does macOS ask about “gemini” in my keychain?', a: 'The Antigravity CLI owns that Keychain item, so macOS asks before AI Usage reads it. Enter your login password and choose Always Allow.' },
+      { q: 'Why is my data marked stale?', a: 'A refresh failed: network, expired auth, or a changed endpoint. The last good snapshot stays visible with its age and the error, and the next scheduled refresh retries.' },
+      { q: 'The numbers disagree with my CLI. Why?', a: 'Provider endpoints are unofficial and evolve. Windows, scopes and reset semantics can differ between the API view and the CLI view. Unknown payloads show as unavailable rather than guessed.' },
+      { q: 'Which macOS versions work?', a: 'macOS 14 and later. The popover uses Liquid Glass on macOS 26 and a standard blur earlier. Releases are built for Apple silicon.' },
     ],
   },
   footer: {
@@ -277,7 +236,7 @@ const vi: Messages = {
     name: 'AI Usage Monitor',
     tagline: 'Mọi giới hạn AI coding, ngay trên menu bar.',
     description:
-      'Ứng dụng menu bar macOS hiển thị quota Claude Code, Codex, Cursor, Copilot và OpenCode kèm đếm ngược reset.',
+      'Ứng dụng menu bar macOS hiển thị quota Claude Code, Codex, Cursor, Antigravity, Command Code và nhiều hơn, hỗ trợ nhiều account và đếm ngược reset.',
   },
   nav: {
     features: 'Tính năng',
@@ -294,117 +253,85 @@ const vi: Messages = {
     titleA: 'Mọi giới hạn AI coding,',
     titleB: 'ngay trên menu bar.',
     subtitle:
-      'Phần trăm usage trực tiếp, đếm ngược reset và cảnh báo ngưỡng cho các công cụ AI bạn đang trả tiền. Chỉ đọc — tái dùng đăng nhập CLI sẵn có, không bao giờ lưu token.',
+      'Phần trăm usage trực tiếp, đếm ngược reset và cảnh báo ngưỡng cho các công cụ AI bạn đang trả tiền. Tái dùng đăng nhập CLI sẵn có, hỗ trợ nhiều account cho mỗi provider và giữ credentials trong Keychain.',
     download: 'Tải về',
     viewReleases: 'Xem releases',
     viewSource: 'Mã nguồn',
     versionNote: 'v{version} · macOS arm64',
-    pillAria: 'Xem trước menu bar hiển thị usage cao nhất 42 phần trăm',
-    cardTitle: 'OpenAI Codex',
-    cardAccount: 'you@example.com · Plus',
-    cardStatus: 'Đã kết nối',
-    mockNote: 'Minh họa giao diện bằng CSS',
   },
   providers: {
     eyebrow: 'Providers',
     title: 'Providers',
-    subtitle: 'Một nơi theo dõi, mọi quota quan trọng. Mỗi tích hợp đọc đăng nhập bạn đã có.',
+    subtitle: 'Chín provider, một popover. Mỗi tích hợp tái dùng đăng nhập bạn đã có.',
     items: [
-      {
-        name: 'Claude Code',
-        color: 'claude',
-        source: 'OAuth usage endpoint',
-        detail: 'Session, weekly, scoped theo model và usage credits. Đọc CLAUDE_CODE_OAUTH_TOKEN, ~/.claude hoặc Keychain đăng nhập.',
-      },
-      {
-        name: 'Codex',
-        color: 'codex',
-        source: 'App-server local (JSON-RPC)',
-        detail: 'Rate limit 5 giờ và weekly kèm reset. Gọi Codex CLI bạn đã cài; hỗ trợ nhiều home, chuyển bằng 1 click.',
-      },
-      {
-        name: 'Cursor',
-        color: 'muted',
-        source: 'Session app local, chỉ đọc',
-        detail: 'Đọc session đã đăng nhập của Cursor.app từ database local mà không sửa gì. Cookie cursor.com dự phòng lưu trong Keychain.',
-      },
-      {
-        name: 'Copilot',
-        color: 'muted',
-        source: 'GitHub device flow',
-        detail: 'Kết nối tài khoản GitHub bằng device authorization. Token nằm trong Keychain, không nằm trong app.',
-      },
-      {
-        name: 'OpenCode',
-        color: 'muted',
-        source: 'Dashboard session cookie',
-        detail: 'Dán Cookie header dashboard một lần; chỉ auth cookie OpenCode được giữ trong Keychain.',
-      },
+      { name: 'Claude Code', color: 'claude', source: 'OAuth usage endpoint', detail: 'Cửa sổ session, weekly và theo model cùng usage credits. Nhiều account, đăng nhập tách biệt.' },
+      { name: 'Codex', color: 'codex', source: 'App-server local (JSON-RPC)', detail: 'Giới hạn 5 giờ và weekly kèm reset. Chạy Codex CLI bạn đã cài; thêm account mà không thay account đang dùng.' },
+      { name: 'Cursor', color: 'muted', source: 'Session app local, chỉ đọc', detail: 'Plan usage, Auto/API và ngày hết chu kỳ từ session đã đăng nhập của Cursor.app. Có cookie dự phòng.' },
+      { name: 'Antigravity', color: 'muted', source: 'Session Antigravity CLI', detail: 'Quota theo account từ session agy. Thêm tài khoản Google khác ngay trong app.' },
+      { name: 'Command Code', color: 'muted', source: 'Command Code API', detail: 'Credits hàng tháng, giới hạn 5 giờ và weekly, số request, ngày gia hạn, kèm email và plan.' },
+      { name: 'Copilot', color: 'muted', source: 'GitHub device flow', detail: 'Kết nối GitHub bằng device authorization. Token nằm trong Keychain.' },
+      { name: 'Gemini', color: 'muted', source: 'Đăng nhập Gemini CLI', detail: 'Quota từ đăng nhập Gemini CLI bạn đã tạo.' },
+      { name: 'Grok', color: 'muted', source: 'Session local', detail: 'Usage từ đăng nhập Grok sẵn có, chỉ đọc.' },
+      { name: 'OpenCode', color: 'muted', source: 'Session cookie dashboard', detail: 'Dán Cookie header dashboard một lần; chỉ auth cookie OpenCode được giữ trong Keychain.' },
     ],
   },
   features: {
     eyebrow: 'Tính năng',
     title: 'Tính năng',
-    subtitle: 'Nhỏ gọn nhưng chỉn chu.',
+    subtitle: 'Giao diện nhỏ gọn, hành vi cẩn trọng.',
     items: [
-      {
-        title: 'Menu bar trực tiếp',
-        detail: 'Một status item có thể theo provider đang chọn, provider usage cao nhất hoặc app foreground được nhận diện. Settings vẫn có chế độ chỉ icon, tổng hợp, từng provider, critical-only và provider cố định.',
-      },
-      {
-        title: 'Ngưỡng cảnh báo',
-        detail: 'Đặt mức warning và critical. Cards, bars và menu bar chuyển từ màu provider sang hổ phách rồi đỏ.',
-      },
-      {
-        title: 'Đếm ngược reset',
-        detail: 'Mọi window đều hiện thời điểm reset — mặc định tương đối, hover để xem giờ chính xác.',
-      },
-      {
-        title: 'Chuyển account Codex',
-        detail: 'Đăng ký nhiều Codex home và chuyển home live từ Settings. Chỉ move folder, không đụng credentials.',
-      },
-      {
-        title: 'Stale trung thực',
-        detail: 'Lỗi thì giữ snapshot tốt gần nhất, ghi rõ stale kèm lỗi — không bao giờ im lặng hiện số 0.',
-      },
-      {
-        title: 'Mở cùng máy',
-        detail: 'Khởi động cùng macOS và refresh theo lịch bạn chọn: 1–15 phút hoặc chỉ thủ công.',
-      },
-      {
-        title: 'Giao diện sáng và tối',
-        detail: 'Website mặc định theo giao diện hệ thống. Bạn có thể đổi theme ở thanh đầu trang và lựa chọn sẽ được lưu cho lần truy cập sau.',
-      },
-      {
-        title: 'Terminal và JSON',
-        detail: 'Truy vấn quota cache hoặc tổng hợp log token Claude Code/Codex từ shell, tmux và Starship. JSON có field ổn định; lệnh quota không refresh provider.',
-      },
+      { title: 'Popover Liquid Glass', detail: 'Popover gọn dùng chất liệu Liquid Glass của macOS 26, tự quay về blur tiêu chuẩn trên bản cũ hơn.' },
+      { title: 'Nhiều account', detail: 'Giữ nhiều đăng nhập Claude, Codex và Antigravity cạnh nhau, chuyển ngay trong popover. Credentials nằm trong Keychain.' },
+      { title: 'Menu bar trực tiếp', detail: 'Bốn chế độ: chỉ icon, usage gộp, một provider, hoặc provider của app bạn đang dùng.' },
+      { title: 'Ngưỡng cảnh báo', detail: 'Đặt phần trăm cảnh báo và nghiêm trọng. Thanh usage và menu bar đổi từ màu provider sang vàng rồi đỏ.' },
+      { title: 'Đếm ngược reset', detail: 'Mỗi cửa sổ cho biết khi nào reset, mặc định là tương đối, rê chuột để xem giờ chính xác.' },
+      { title: 'Trạng thái cũ minh bạch', detail: 'Khi lỗi, snapshot tốt gần nhất vẫn hiển thị và được gắn nhãn stale kèm lỗi. Không bao giờ hiện số 0 âm thầm.' },
+      { title: 'Mở khi đăng nhập', detail: 'Khởi động cùng máy và refresh mỗi 1 đến 15 phút, hoặc chỉ khi bạn yêu cầu.' },
+      { title: 'Terminal và JSON', detail: 'Truy vấn quota cache hoặc tổng hợp log token Claude Code/Codex từ shell, tmux và Starship. Lệnh quota không refresh provider.' },
+      { title: 'Tiếng Anh và Tiếng Việt', detail: 'App và website chuyển giữa tiếng Anh và tiếng Việt, theo giao diện sáng hoặc tối của bạn.' },
     ],
+  },
+  showcase: {
+    eyebrow: 'Tài khoản',
+    title: 'Một popover, mọi account',
+    subtitle: 'Thêm đăng nhập thứ hai mà không cần đăng xuất tài khoản đầu.',
+    popoverAlt: 'Popover AI Usage liệt kê usage của Codex, Claude Code, Cursor, Google Antigravity và Command Code',
+    accountAlt: 'Cửa sổ Add Account của Antigravity với các hành động lưu, đăng nhập và mở app',
+    accountTitle: 'Đăng nhập tài khoản Antigravity khác',
+    accountDetail: 'App lưu account hiện tại, đăng xuất CLI, mở Terminal chạy agy rồi tự nhập account mới ngay khi bạn đăng nhập xong. Có thể chuyển lại bất cứ lúc nào từ popover.',
+    sampleNote: 'Ảnh chụp dùng dữ liệu mẫu.',
   },
   privacy: {
     eyebrow: 'Riêng tư',
-    title: 'Privacy',
-    subtitle: 'Chỉ đọc từ thiết kế. Không gì rời khỏi máy bạn.',
+    title: 'Riêng tư',
+    subtitle: 'Chỉ đọc khi có thể. Không gì rời khỏi máy ngoài các request tới provider.',
     rows: [
-      ['Claude Code', 'OAuth token từ env, ~/.claude hoặc Keychain đăng nhập. Chỉ đọc, không ghi, không cache.'],
+      ['Claude Code', 'OAuth token từ env, ~/.claude hoặc Keychain đăng nhập. Chỉ đọc, không log, không cache.'],
       ['Codex', 'Giao thức app-server local. App không bao giờ mở file auth.'],
       ['Cursor', 'Database session local mở read-only. Cookie dự phòng nằm trong Keychain.'],
+      ['Antigravity', 'Session agy đọc từ Keychain item hoặc file token. macOS hỏi một lần; chọn Always Allow.'],
+      ['Command Code', 'API key đọc từ ~/.commandcode/auth.json và chỉ gửi tới api.commandcode.ai.'],
       ['Copilot', 'Token device-flow GitHub nằm trong Keychain.'],
       ['OpenCode', 'Session cookie dashboard nằm trong Keychain.'],
+      ['Account đã lưu', 'Account thêm vào được lưu trong Keychain macOS, không nằm trong preferences hay log.'],
     ],
     principles: [
-      'Không mật khẩu/token trong preferences, log, screenshot hay app bundle.',
-      'Endpoint của provider không chính thức và có thể đổi — app xuống cấp thành trạng thái unavailable rõ ràng.',
-      'Snapshot cache local tại ~/Library/Application Support/AIUsage; credentials không bao giờ cache.',
+      'Không có mật khẩu hay token trong preferences, log, ảnh chụp hoặc app bundle.',
+      'Endpoint của provider không chính thức và có thể đổi. App hạ cấp thành trạng thái unavailable rõ ràng.',
+      'Snapshot cache local tại ~/Library/Application Support/AIUsage; credentials không bao giờ được cache.',
     ],
   },
   install: {
     eyebrow: 'Cài đặt',
     title: 'Install',
-    subtitle: 'Cài ứng dụng macOS từ file DMG.',
-    requirements: 'Yêu cầu macOS 14 trở lên. Đăng nhập CLI của từng provider trước để kết nối tài khoản.',
-    steps: ['Tải DMG mới nhất bằng nút phía trên hoặc tại Releases.', 'Mở DMG, kéo AI Usage Monitor vào Applications.', 'Mở ứng dụng và bật provider trong Settings.'],
-    commands: [],
+    subtitle: 'Chọn Homebrew, script cài đặt hoặc file DMG.',
+    requirements: 'Yêu cầu macOS 14 trở lên. Homebrew và script hiện hỗ trợ Apple silicon.',
+    steps: ['Cài bản mới nhất bằng Homebrew:', 'Hoặc cài từ Terminal:', 'Hoặc cài thủ công từ file DMG:'],
+    commands: [
+      'brew tap thienle99-dev/ai-usage https://github.com/thienle99-dev/ai-usage\nbrew install --cask thienle99-dev/ai-usage/ai-usage-monitor',
+      'curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install.sh | sh',
+      'Tải DMG mới nhất bằng nút phía trên hoặc tại Releases, sau đó kéo AI Usage Monitor vào Applications.',
+    ],
     binaries: 'Nếu macOS chặn lần mở đầu, Control-click ứng dụng, chọn Open rồi xác nhận.',
     autoUpdateTitle: 'Tự động cập nhật',
     autoUpdate: 'Sparkle tự kiểm tra bản cập nhật và thông báo khi có bản mới. Bạn cũng có thể kiểm tra trong Settings → About → Updates.',
@@ -414,26 +341,12 @@ const vi: Messages = {
     eyebrow: 'FAQ',
     title: 'FAQ',
     items: [
-      {
-        q: 'App có lưu token của tôi không?',
-        a: 'Không. App đọc đăng nhập CLI đã tạo sẵn, không giữ gì liên quan credentials trong preferences/log, không ghi ngược vào file provider (chuyển account Codex cũng chỉ move folder).',
-      },
-      {
-        q: 'Sao dữ liệu bị đánh dấu stale?',
-        a: 'Lần refresh lỗi — mạng, auth hết hạn, hoặc endpoint đổi. Snapshot tốt gần nhất vẫn hiện kèm tuổi và lỗi, kỳ refresh sau tự thử lại.',
-      },
-      {
-        q: 'Chuyển account Codex thế nào?',
-        a: 'Đăng ký mỗi Codex home một lần trong Settings → Providers → Codex homes, rồi bấm “Make active”. App swap folder vào ~/.codex và refresh.',
-      },
-      {
-        q: 'Số liệu lệch với CLI. Vì sao?',
-        a: 'Endpoint không chính thức và thay đổi. Window, scope và ngữ nghĩa reset có thể khác giữa góc nhìn OAuth/API và CLI. Payload lạ hiện unavailable chứ không đoán.',
-      },
-      {
-        q: 'Hỗ trợ macOS nào?',
-        a: 'macOS Sonoma (14) trở lên, cả Apple Silicon và Intel.',
-      },
+      { q: 'App có lưu token của tôi không?', a: 'App đọc các đăng nhập CLI đã tạo sẵn và không giữ gì liên quan credentials trong preferences hay log. Account bạn thêm vào được lưu trong Keychain macOS.' },
+      { q: 'Thêm account thứ hai thế nào?', a: 'Dùng nút + trong popover. Claude Code và Codex đăng nhập trong session tách biệt. Với Antigravity, “Sign in to another account” lưu account hiện tại, mở Terminal chạy agy và nhập account mới khi bạn xong.' },
+      { q: 'Sao macOS hỏi về “gemini” trong keychain?', a: 'Antigravity CLI sở hữu Keychain item đó nên macOS hỏi trước khi AI Usage đọc. Nhập mật khẩu đăng nhập và chọn Always Allow.' },
+      { q: 'Sao dữ liệu bị đánh dấu stale?', a: 'Một lần refresh thất bại: mạng, auth hết hạn hoặc endpoint đã đổi. Snapshot tốt gần nhất vẫn hiển thị kèm tuổi và lỗi, lần refresh theo lịch tiếp theo sẽ thử lại.' },
+      { q: 'Số liệu khác với CLI của tôi. Vì sao?', a: 'Endpoint của provider không chính thức và thay đổi. Cửa sổ, phạm vi và cách reset có thể khác giữa góc nhìn API và CLI. Payload lạ hiển thị là unavailable thay vì đoán.' },
+      { q: 'macOS nào dùng được?', a: 'macOS 14 trở lên. Popover dùng Liquid Glass trên macOS 26 và blur tiêu chuẩn ở bản cũ hơn. Bản release build cho Apple silicon.' },
     ],
   },
   footer: {

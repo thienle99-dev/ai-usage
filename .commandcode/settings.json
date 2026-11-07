@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Shell(python3 -c \" import re s=open('/opt/homebrew/lib/node_modules/command-code/dist/cli.mjs').read() i=s.find('resolveCommandAuthDir(e){') print(s[i:i+200]) \")"
+    ],
+    "deny": [],
+    "defaultMode": "default"
+  }
+}

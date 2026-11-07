@@ -173,3 +173,11 @@
 "Claude Code token refresh returned an invalid response." = "Claude Code token refresh returned an invalid response.";
 "%d days to renew" = "%d days to renew";
 "1 day to renew" = "1 day to renew";
+"Save the current account, then sign in with Antigravity CLI in Terminal." = "Save the current account, then sign in with Antigravity CLI in Terminal.";
+"Saving the current Antigravity account…" = "Saving the current Antigravity account…";
+"The current Antigravity account could not be saved." = "The current Antigravity account could not be saved.";
+"Sign in with a different Google account in the Terminal window." = "Sign in with a different Google account in the Terminal window.";
+"Account added. Antigravity CLI is now signed in with it." = "Account added. Antigravity CLI is now signed in with it.";
+"The new Antigravity account could not be saved." = "The new Antigravity account could not be saved.";
+"Terminal.app could not be found." = "Terminal.app could not be found.";
+"Antigravity CLI (agy) not found. Install it, then try again." = "Antigravity CLI (agy) not found. Install it, then try again.";

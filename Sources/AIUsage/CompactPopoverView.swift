@@ -66,6 +66,7 @@ struct CompactPopoverView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.trailing, 12)
                 .background {
                     GeometryReader { geometry in
                         Color.clear.preference(
@@ -73,6 +74,12 @@ struct CompactPopoverView: View {
                             value: geometry.size.height
                         )
                     }
+                }
+                .background {
+                    ScrollViewScrollerStyleBridge(isDarkAppearance: isDarkAppearance)
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
                 }
             }
             .frame(height: min(providerContentHeight, 540))
@@ -302,6 +309,47 @@ private struct PopoverWindowAppearanceBridge: NSViewRepresentable {
         view.appearanceName = appearanceName
         view.reduceTransparency = reduceTransparency
         view.increasedContrast = increasedContrast
+    }
+}
+
+@MainActor
+private struct ScrollViewScrollerStyleBridge: NSViewRepresentable {
+    let isDarkAppearance: Bool
+
+    func makeNSView(context: Context) -> ScrollViewScrollerStyleView {
+        let view = ScrollViewScrollerStyleView()
+        view.isDarkAppearance = isDarkAppearance
+        return view
+    }
+
+    func updateNSView(_ view: ScrollViewScrollerStyleView, context: Context) {
+        view.isDarkAppearance = isDarkAppearance
+    }
+}
+
+@MainActor
+private final class ScrollViewScrollerStyleView: NSView {
+    var isDarkAppearance = false {
+        didSet { applyScrollerStyle() }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyScrollerStyle()
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        applyScrollerStyle()
+    }
+
+    private func applyScrollerStyle() {
+        guard let scrollView = enclosingScrollView else { return }
+        scrollView.scrollerStyle = .overlay
+        scrollView.autohidesScrollers = true
+        guard let scroller = scrollView.verticalScroller else { return }
+        scroller.controlSize = .mini
+        scroller.knobStyle = isDarkAppearance ? .light : .dark
     }
 }
 

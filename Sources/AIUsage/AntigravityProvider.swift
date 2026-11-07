@@ -341,6 +341,26 @@ extension AntigravityCredentials {
         return result as? Data
     }
 
+    /// Signs Antigravity CLI out so its next launch asks for a login. Callers must save the account first.
+    static func clearLiveSession() {
+        SecItemDelete([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "gemini",
+            kSecAttrAccount as String: "antigravity"
+        ] as CFDictionary)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
+    }
+
+    /// Identifies the session Antigravity CLI is signed in with right now. Prefers the email, so a
+    /// routine token refresh is not mistaken for a new sign-in.
+    static func currentLiveSessionKey() -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let cliData = try? Data(contentsOf: home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
+        guard let credentials = decode(preferredData(keychainData: keychainData(), cliData: cliData)) else { return nil }
+        return credentials.identityLabel?.lowercased() ?? credentials.refreshToken
+    }
+
     static func decode(_ data: Data?) -> AntigravityCredentials? {
         guard let data else { return nil }
         var payload = data
