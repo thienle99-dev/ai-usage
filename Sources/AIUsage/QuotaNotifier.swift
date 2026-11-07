@@ -50,11 +50,13 @@ protocol QuotaNotificationDelivering: Sendable {
 /// denied is a silent no-op; nothing throws.
 struct UserNotificationQuotaDeliverer: QuotaNotificationDelivering {
     func requestAuthorization() async -> Bool {
-        (try? await UNUserNotificationCenter.current()
+        guard NotificationBundleSupport.isPackagedApp else { return false }
+        return (try? await UNUserNotificationCenter.current()
             .requestAuthorization(options: [.alert, .sound])) ?? false
     }
 
     func deliver(_ notification: QuotaNotification) async {
+        guard NotificationBundleSupport.isPackagedApp else { return }
         let content = UNMutableNotificationContent()
         content.title = notification.title
         content.body = notification.body
