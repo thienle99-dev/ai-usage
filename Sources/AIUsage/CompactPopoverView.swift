@@ -37,7 +37,7 @@ struct CompactPopoverView: View {
                 locale: locale,
                 isRefreshing: store.isRefreshing,
                 refresh: { Task { await store.refresh() } },
-                addAccount: { openWindow(id: "add-account") },
+                addAccount: { presentAddAccountWindow() },
                 toggleAppearance: {
                     setAppearance(isDarkAppearance ? "light" : "dark")
                 },
@@ -167,6 +167,20 @@ struct CompactPopoverView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             NSApp.activate(ignoringOtherApps: true)
             guard let window = NSApp.windows.first(where: { $0.title == "Settings" }) else { return }
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.orderFrontRegardless()
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    private func presentAddAccountWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "add-account")
+        let windowTitle = String(localized: "Add Account", locale: store.locale)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            NSApp.activate(ignoringOtherApps: true)
+            guard let window = NSApp.windows.first(where: { $0.title == windowTitle }) else { return }
             if window.isMiniaturized { window.deminiaturize(nil) }
             window.orderFrontRegardless()
             window.makeKeyAndOrderFront(nil)

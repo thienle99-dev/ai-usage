@@ -584,6 +584,46 @@ final class ProviderAndStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testAccountLoginCoordinatorStartsIsolatedCodexSignIn() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let launcher = FakeAccountLoginProcessLauncher()
+        let coordinator = AccountLoginCoordinator(
+            store: makeIsolatedAccountStore(root: root), processLauncher: launcher,
+            draftRootURL: root.appendingPathComponent("drafts"),
+            cliExecutable: { _ in URL(fileURLWithPath: "/fake/codex") }
+        )
+
+        coordinator.select(.codex)
+        coordinator.beginSignIn()
+
+        XCTAssertEqual(coordinator.phase, .signingIn)
+        XCTAssertEqual(launcher.arguments, ["-c", "cli_auth_credentials_store=\"file\"", "login"])
+        XCTAssertNotNil(launcher.environment["CODEX_HOME"])
+        XCTAssertNil(launcher.environment["CLAUDE_CONFIG_DIR"])
+        XCTAssertNil(launcher.environment["OPENAI_API_KEY"])
+        await coordinator.cancel()
+        XCTAssertEqual(coordinator.phase, .cancelled)
+    }
+
+    @MainActor
+    func testSaveCurrentAccountActionPreservesClaudeAndCodexSessions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = makeIsolatedAccountStore(root: root)
+
+        try store.saveCurrentAccount(for: .claude)
+        try store.saveCurrentAccount(for: .codex)
+
+        XCTAssertEqual(store.claudeCodeAccounts.count, 1)
+        XCTAssertEqual(store.codexAccounts.count, 1)
+        XCTAssertEqual(store.claudeCodeAccounts.first?.tool, .claudeCode)
+        XCTAssertEqual(store.codexAccounts.first?.tool, .codex)
+        XCTAssertEqual(store.claudeCodeInUseAccountID, store.claudeCodeAccounts.first?.id)
+        XCTAssertEqual(store.codexInUseAccountID, store.codexAccounts.first?.id)
+    }
+
+    @MainActor
     func testAccountLoginCoordinatorShowsRetryableVerificationFailure() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }

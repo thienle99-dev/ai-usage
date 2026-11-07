@@ -49,14 +49,14 @@ import Darwin
         .defaultSize(width: 760, height: 560)
         .windowResizability(.contentSize)
 
-        Window("Add account", id: "add-account") {
+        Window("Add Account", id: "add-account") {
             AddAccountWindowView()
                 .environment(store)
                 .environment(accountLogin)
                 .environment(\.locale, store.locale)
                 .preferredColorScheme(store.colorSchemeOverride)
         }
-        .defaultSize(width: 540, height: 500)
+        .defaultSize(width: 440, height: 340)
         .windowResizability(.contentSize)
 
         Window("Token & Cost Report", id: "usage-report") {

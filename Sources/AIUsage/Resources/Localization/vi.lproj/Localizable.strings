@@ -198,6 +198,9 @@
 "The selected account is no longer registered." = "Tài khoản đã chọn không còn trong danh sách.";
 "Could not acquire the account storage lock." = "Không thể lấy khóa lưu trữ tài khoản.";
 "An interrupted account change needs recovery before switching." = "Cần khôi phục thao tác đổi tài khoản bị gián đoạn trước khi chuyển tiếp.";
+"Add Account" = "Thêm tài khoản";
+"Save the account already authenticated on this Mac." = "Lưu tài khoản đã đăng nhập trên máy Mac này.";
+"Start authentication for a different account." = "Bắt đầu đăng nhập bằng tài khoản khác.";
 "Claude Code session expired. Sign in again." = "Phiên Claude Code đã hết hạn. Hãy đăng nhập lại.";
 "Could not refresh the Claude Code session." = "Không thể làm mới phiên Claude Code.";
 "Claude Code token refresh returned no HTTP response." = "Không nhận được phản hồi HTTP khi làm mới token Claude Code.";

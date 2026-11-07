@@ -198,6 +198,9 @@
 "The selected account is no longer registered." = "The selected account is no longer registered.";
 "Could not acquire the account storage lock." = "Could not acquire the account storage lock.";
 "An interrupted account change needs recovery before switching." = "An interrupted account change needs recovery before switching.";
+"Add Account" = "Add Account";
+"Save the account already authenticated on this Mac." = "Save the account already authenticated on this Mac.";
+"Start authentication for a different account." = "Start authentication for a different account.";
 "Claude Code session expired. Sign in again." = "Claude Code session expired. Sign in again.";
 "Could not refresh the Claude Code session." = "Could not refresh the Claude Code session.";
 "Claude Code token refresh returned no HTTP response." = "Claude Code token refresh returned no HTTP response.";
