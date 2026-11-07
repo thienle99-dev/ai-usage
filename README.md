@@ -18,6 +18,24 @@ Create a runnable `.app` bundle:
 open "dist/AI Usage Monitor.app"
 ```
 
+## Install a release
+
+On Apple silicon with macOS 14 or later, install the latest release with Homebrew:
+
+```sh
+brew tap thienle99-dev/ai-usage https://github.com/thienle99-dev/ai-usage
+brew install --cask thienle99-dev/ai-usage/ai-usage-monitor
+```
+
+Or install it into `~/Applications` with the shell installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install.sh | sh
+```
+
+The installer downloads the latest Apple silicon release archive. Set `AI_USAGE_INSTALL_DIR` to choose a different install folder. These commands require a published GitHub release with the stable `AI-Usage-Monitor-macos-arm64.zip` asset; see [release instructions](docs/RELEASING.md).
+
+
 The app is an agent-style menu bar app, so it has no Dock icon. Open Settings from the popover gear button. Settings include General, Appearance, Providers, and About tabs.
 
 In **Settings → Appearance → Language**, choose the system language, English, or Tiếng Việt. **Settings → About → Updates** provides a manual update check in signed release builds; Sparkle also checks on its normal schedule. Releases publish a signed appcast at [GitHub Releases](https://github.com/thienle99-dev/ai-usage/releases/latest/download/appcast.xml). See [release instructions](docs/RELEASING.md) for signing setup.

@@ -41,6 +41,8 @@ xcrun stapler staple "dist/AI Usage Monitor.app"
 # 3. Archive only the app and preserve its framework symlinks.
 ditto -c -k --sequesterRsrc --keepParent \
   "dist/AI Usage Monitor.app" "dist/AI-Usage-Monitor-vX.Y.Z-macos-arm64.zip"
+# Keep a stable asset name for Homebrew and install.sh, alongside the versioned archive.
+cp "dist/AI-Usage-Monitor-vX.Y.Z-macos-arm64.zip" dist/AI-Usage-Monitor-macos-arm64.zip
 
 # 4. Generate a signed appcast using Sparkle's generate_appcast tool.
 #    Keep release archives in one updates directory when generating a feed with
@@ -56,6 +58,7 @@ cp "dist/AI-Usage-Monitor-vX.Y.Z-macos-arm64.zip" dist/sparkle-updates/
 git tag vX.Y.Z && git push origin vX.Y.Z
 gh release create vX.Y.Z \
   dist/AI-Usage-Monitor-vX.Y.Z-macos-arm64.zip \
+  dist/AI-Usage-Monitor-macos-arm64.zip \
   dist/sparkle-updates/appcast.xml \
   --title "vX.Y.Z" --notes-file <notes-file>
 
