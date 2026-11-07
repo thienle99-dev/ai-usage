@@ -8,7 +8,7 @@ struct CompactPopoverView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @State private var providerContentHeight: CGFloat = 440
+    @State private var providerContentHeight: CGFloat = 1
 
     private var providers: [Provider] {
         store.providerOrder.filter {
@@ -75,7 +75,7 @@ struct CompactPopoverView: View {
                     }
                 }
             }
-            .frame(height: min(max(providerContentHeight, 440), 540))
+            .frame(height: min(providerContentHeight, 540))
             .padding(.vertical, 8)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)

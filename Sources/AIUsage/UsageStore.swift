@@ -329,16 +329,24 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
         save()
     }
 
-    func addCurrentAntigravityAccount() async {
-        guard !antigravityAccountSwitchInFlight, !refreshing.contains(.antigravity) else { return }
+    @discardableResult
+    func addCurrentAntigravityAccount() async -> Bool {
+        guard !antigravityAccountSwitchInFlight, !refreshing.contains(.antigravity) else {
+            antigravityAccountError = String(localized: "Wait for the Antigravity refresh or account switch to finish, then try again.")
+            return false
+        }
         antigravityAccountSwitchInFlight = true
         defer { antigravityAccountSwitchInFlight = false }
         do {
-            _ = try antigravityAccountManager.stashActiveSession()
+            guard try antigravityAccountManager.stashActiveSession() != nil else {
+                throw AccountSessionError.unidentified
+            }
             antigravityAccountError = nil
             refreshAntigravityAccountIndex()
             await refresh(provider: .antigravity)
+            return true
         } catch { antigravityAccountError = error.localizedDescription }
+        return false
     }
 
     func switchAntigravityAccount(to id: String?) async {

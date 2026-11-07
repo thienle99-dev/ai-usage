@@ -81,7 +81,7 @@ enum ManagedLoginPhase: Equatable {
     }
 
     func select(_ provider: Provider) {
-        guard (provider == .claude || provider == .codex), phase != .interrupted else { return }
+        guard ([Provider.claude, .codex, .antigravity].contains(provider)), phase != .interrupted else { return }
         self.provider = provider
         if case .failed = phase { phase = .choosing }
         if phase == .succeeded || phase == .cancelled { phase = .choosing; message = "" }
@@ -98,6 +98,22 @@ enum ManagedLoginPhase: Equatable {
     }
 
     func saveCurrentAccount() {
+        if provider == .antigravity {
+            guard !isRunning else { return }
+            phase = .saving
+            message = String(localized: "Saving Antigravity account…")
+            Task {
+                let saved = await store.addCurrentAntigravityAccount()
+                if !saved, let error = store.antigravityAccountError {
+                    phase = .failed(error)
+                } else if saved {
+                    phase = .succeeded
+                    message = String(localized: "Current Antigravity account saved.")
+                }
+                reloadAccounts()
+            }
+            return
+        }
         phase = .saving
         do {
             try store.saveCurrentAccount(for: provider)
@@ -242,7 +258,22 @@ enum ManagedLoginPhase: Equatable {
     }
 
     private func reloadAccounts() {
-        accounts = provider == .claude ? store.claudeCodeAccounts : store.codexAccounts
+        switch provider {
+        case .claude: accounts = store.claudeCodeAccounts
+        case .codex: accounts = store.codexAccounts
+        case .antigravity:
+            accounts = store.antigravityAccounts.map {
+                ManagedAccountRecord(
+                    id: $0.id,
+                    label: $0.identity,
+                    tool: .antigravity,
+                    sessionReference: $0.id,
+                    identityFingerprint: $0.id,
+                    registeredAt: $0.addedAt
+                )
+            }
+        default: accounts = []
+        }
     }
 
     private func cleanupDraft() {

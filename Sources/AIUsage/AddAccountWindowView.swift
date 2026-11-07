@@ -13,6 +13,7 @@ struct AddAccountWindowView: View {
         switch login.provider {
         case .claude: Color(red: 217.0 / 255.0, green: 119.0 / 255.0, blue: 87.0 / 255.0)
         case .codex: Color(red: 22.0 / 255.0, green: 122.0 / 255.0, blue: 112.0 / 255.0)
+        case .antigravity: Color(red: 92.0 / 255.0, green: 129.0 / 255.0, blue: 225.0 / 255.0)
         default: .accentColor
         }
     }
@@ -24,7 +25,9 @@ struct AddAccountWindowView: View {
             VStack(spacing: 4) {
                 actionRow(
                     title: "Save current account",
-                    description: "Save the account already authenticated on this Mac.",
+                    description: login.provider == .antigravity
+                        ? "Save the account currently signed in to Antigravity."
+                        : "Save the account already authenticated on this Mac.",
                     symbol: "bookmark.plus",
                     isHovered: $saveRowHovered,
                     action: login.saveCurrentAccount
@@ -32,15 +35,26 @@ struct AddAccountWindowView: View {
                 .disabled(login.isRunning)
                 .accessibilityIdentifier("add-account-save-current")
 
-                actionRow(
-                    title: "Sign in to another account",
-                    description: "Start authentication for a different account.",
-                    symbol: "rectangle.portrait.and.arrow.right",
-                    isHovered: $signInRowHovered,
-                    action: login.beginSignIn
-                )
-                .disabled(login.isRunning)
-                .accessibilityIdentifier("add-account-sign-in-another")
+                if login.provider == .antigravity {
+                    actionRow(
+                        title: "Open Antigravity",
+                        description: "Switch Google accounts in Antigravity, then save the signed-in account here.",
+                        symbol: "rectangle.portrait.and.arrow.right",
+                        isHovered: $signInRowHovered,
+                        action: openAntigravity
+                    )
+                    .accessibilityIdentifier("add-account-open-antigravity")
+                } else {
+                    actionRow(
+                        title: "Sign in to another account",
+                        description: "Start authentication for a different account.",
+                        symbol: "rectangle.portrait.and.arrow.right",
+                        isHovered: $signInRowHovered,
+                        action: login.beginSignIn
+                    )
+                    .disabled(login.isRunning)
+                    .accessibilityIdentifier("add-account-sign-in-another")
+                }
             }
 
             if login.isRunning || login.phase == .interrupted {
@@ -65,6 +79,12 @@ struct AddAccountWindowView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if login.provider == .antigravity, let error = store.antigravityAccountError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(UsageTheme.critical)
+            }
+
             if !login.accounts.isEmpty {
                 savedAccounts
             }
@@ -84,6 +104,7 @@ struct AddAccountWindowView: View {
         )) {
             Text("Claude Code").tag(Provider.claude)
             Text("Codex").tag(Provider.codex)
+            Text("Antigravity").tag(Provider.antigravity)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -204,7 +225,13 @@ struct AddAccountWindowView: View {
     }
 
     private func accountRow(_ account: ManagedAccountRecord) -> some View {
-        let activeID = login.provider == .claude ? store.claudeCodeInUseAccountID : store.codexInUseAccountID
+        let activeID: String?
+        switch login.provider {
+        case .claude: activeID = store.claudeCodeInUseAccountID
+        case .codex: activeID = store.codexInUseAccountID
+        case .antigravity: activeID = store.activeAntigravityAccountID
+        default: activeID = nil
+        }
         let isActive = account.id == activeID
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 3) {
@@ -216,7 +243,8 @@ struct AddAccountWindowView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if let error = store.managedAccountErrors[login.provider]?[account.id],
+            if login.provider != .antigravity,
+               let error = store.managedAccountErrors[login.provider]?[account.id],
                error.localizedCaseInsensitiveContains("auth") || error.localizedCaseInsensitiveContains("credential") {
                 Button("Sign in again") { login.beginSignIn() }
                     .buttonStyle(.bordered)
@@ -229,5 +257,13 @@ struct AddAccountWindowView: View {
     private func submitCode() {
         login.submitCode(code.trimmingCharacters(in: .whitespacesAndNewlines))
         code = ""
+    }
+
+    private func openAntigravity() {
+        if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.google.antigravity") {
+            NSWorkspace.shared.open(appURL)
+        } else {
+            store.antigravityAccountError = String(localized: "Antigravity.app could not be found.")
+        }
     }
 }
