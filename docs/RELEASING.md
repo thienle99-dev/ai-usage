@@ -2,8 +2,9 @@
 
 ## Versioning
 
-SemVer (`vX.Y.Z`). No tags exist yet — the first tagged release bootstraps
-both the website Releases page and the Download links.
+Use SemVer (`vX.Y.Z`). Every public release should have a matching git tag and
+an entry under `web/src/content/releases/`; the website uses those entries for
+its Releases page and download links.
 
 The app uses Sparkle 2 for in-app updates. Its appcast is attached to each GitHub
 Release as `appcast.xml`; the stable feed URL is
