@@ -29,7 +29,7 @@ for command_name in curl ditto; do
 done
 
 download_url="https://github.com/thienle99-dev/ai-usage/releases/latest/download/AI-Usage-Monitor-macos-arm64.zip"
-install_directory=${AI_USAGE_INSTALL_DIR:-"$HOME/Applications"}
+install_directory=${AI_USAGE_INSTALL_DIR:-/Applications}
 work_directory=$(mktemp -d "${TMPDIR:-/tmp}/ai-usage-monitor.XXXXXX")
 cleanup() {
     rm -rf "$work_directory"
@@ -51,6 +51,28 @@ if [ ! -d "$app_source" ]; then
     exit 1
 fi
 
-mkdir -p "$install_directory"
-ditto "$app_source" "$install_directory/AI Usage Monitor.app"
+if [ -d "$install_directory" ] && [ -w "$install_directory" ]; then
+    ditto "$app_source" "$install_directory/AI Usage Monitor.app"
+elif [ "$install_directory" = "/Applications" ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "Writing to /Applications requires sudo. Set AI_USAGE_INSTALL_DIR to a writable folder to install without admin access." >&2
+        exit 1
+    fi
+
+    echo "Administrator permission is required to install into /Applications."
+    sudo -v
+    sudo mkdir -p "$install_directory"
+    sudo ditto "$app_source" "$install_directory/AI Usage Monitor.app"
+else
+    if ! mkdir -p "$install_directory"; then
+        echo "Cannot create install directory: $install_directory" >&2
+        exit 1
+    fi
+    if [ ! -w "$install_directory" ]; then
+        echo "Cannot write to install directory: $install_directory" >&2
+        echo "Choose a writable folder with AI_USAGE_INSTALL_DIR." >&2
+        exit 1
+    fi
+    ditto "$app_source" "$install_directory/AI Usage Monitor.app"
+fi
 echo "Installed AI Usage Monitor to $install_directory/AI Usage Monitor.app"

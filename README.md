@@ -32,13 +32,21 @@ brew tap thienle99-dev/ai-usage https://github.com/thienle99-dev/ai-usage
 brew install --cask thienle99-dev/ai-usage/ai-usage-monitor
 ```
 
-Or install it into `~/Applications` with the shell installer:
+Or install it into `/Applications` with the shell installer. It may prompt for
+your administrator password when permission is needed:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install.sh | sh
 ```
 
-Set `AI_USAGE_INSTALL_DIR` to choose a different install folder. Both commands need a published release; see [release instructions](docs/RELEASING.md).
+Set `AI_USAGE_INSTALL_DIR` to choose a different install folder, such as
+`~/Applications`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/thienle99-dev/ai-usage/main/install.sh | AI_USAGE_INSTALL_DIR="$HOME/Applications" sh
+```
+
+Both commands need a published release; see [release instructions](docs/RELEASING.md).
 
 ## Build and run
 
