@@ -1,6 +1,48 @@
 import SwiftUI
 import AppKit
 
+private struct PendingManagedAccountRemoval: Identifiable {
+    enum Kind: Equatable { case managed, antigravity, claudeDesktop }
+
+    let provider: Provider
+    let accountID: String
+    let label: String
+    let kind: Kind
+
+    init(provider: Provider, account: ManagedAccountRecord, isClaudeDesktop: Bool = false) {
+        self.provider = provider
+        self.accountID = account.id
+        self.label = account.label
+        self.kind = isClaudeDesktop ? .claudeDesktop : .managed
+    }
+
+    init(antigravity account: AntigravityAccount) {
+        self.provider = .antigravity
+        self.accountID = account.id
+        self.label = account.displayName
+        self.kind = .antigravity
+    }
+
+    var id: String { "\(kind):\(accountID)" }
+
+    var message: String {
+        if kind == .claudeDesktop {
+            return String(localized: "This deletes the saved Claude Desktop session folder. If it is the current session, the live login stays in place. Quit Claude Desktop before deleting.")
+        }
+        if kind == .antigravity {
+            return String(localized: "This deletes the saved Antigravity credential from AI Usage Monitor’s Keychain. It does not sign out of Antigravity CLI or app.")
+        }
+        switch provider {
+        case .codex:
+            return String(localized: "This removes the saved Codex account and its AI Usage Monitor session copy. The live Codex CLI login stays in place.")
+        case .claude:
+            return String(localized: "This removes the saved Claude Code credential from AI Usage Monitor’s Keychain. The live Claude Code CLI login stays in place.")
+        default:
+            return String(localized: "This removes the saved account from AI Usage Monitor.")
+        }
+    }
+}
+
 // MARK: - Sidebar
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
@@ -1155,7 +1197,7 @@ private struct ProviderAndAccountSettingsPage: View {
     @State private var openCodeCookieHeader = ""
     @State private var openCodeCredentialMessage: String?
     @State private var openCodeHasStoredCookie = OpenCodeCredentialVault.hasStoredCookie
-    @State private var antigravityAccountPendingRemoval: AntigravityAccount?
+    @State private var managedAccountPendingRemoval: PendingManagedAccountRemoval?
     @State private var claudeDesktopAccountName = ""
 
     var body: some View {
@@ -1241,22 +1283,29 @@ private struct ProviderAndAccountSettingsPage: View {
             }
         }
         .confirmationDialog(
-            "Remove saved Antigravity account?",
+            "Remove saved account?",
             isPresented: Binding(
-                get: { antigravityAccountPendingRemoval != nil },
-                set: { if !$0 { antigravityAccountPendingRemoval = nil } }
+                get: { managedAccountPendingRemoval != nil },
+                set: { if !$0 { managedAccountPendingRemoval = nil } }
             ),
             titleVisibility: .visible
         ) {
             Button("Remove saved account", role: .destructive) {
-                if let account = antigravityAccountPendingRemoval {
-                    store.removeAntigravityAccount(account.id)
+                if let pending = managedAccountPendingRemoval {
+                    switch pending.kind {
+                    case .antigravity:
+                        store.removeAntigravityAccount(pending.accountID)
+                    case .claudeDesktop:
+                        store.removeClaudeDesktopAccount(pending.accountID)
+                    case .managed:
+                        store.removeManagedAccount(for: pending.provider, id: pending.accountID)
+                    }
                 }
-                antigravityAccountPendingRemoval = nil
+                managedAccountPendingRemoval = nil
             }
-            Button("Cancel", role: .cancel) { antigravityAccountPendingRemoval = nil }
+            Button("Cancel", role: .cancel) { managedAccountPendingRemoval = nil }
         } message: {
-            Text("This deletes the saved Antigravity credential from AI Usage Monitor’s Keychain. It does not sign out of Antigravity CLI or app.")
+            Text(managedAccountPendingRemoval?.message ?? "This removes the saved account from AI Usage Monitor.")
         }
         .task {
             guard page == .accounts else { return }
@@ -1273,18 +1322,43 @@ private struct ProviderAndAccountSettingsPage: View {
             .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
         ForEach(store.codexAccounts) { account in
-            HStack {
+            VStack(alignment: .leading, spacing: 4) {
+              HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.label).font(.system(size: 12, weight: .medium))
-                    Text(account.id == store.codexInUseAccountID ? "In use" : "Saved")
+                    let isSwitching = store.accountSessionActionProvider == .codex
+                        && store.accountSessionActionAccountID == account.id
+                    Text(isSwitching ? (store.accountSessionActionStatus ?? "Switching account…") : account.id == store.codexInUseAccountID ? "In use" : "Saved")
                         .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
                 }
                 Spacer()
                 if account.id != store.codexInUseAccountID {
-                    Button("Activate") { store.activateCodexAccount(account.id) }
+                    let isSwitching = store.accountSessionActionProvider == .codex
+                        && store.accountSessionActionAccountID == account.id
+                    Button {
+                        Task { await store.activateManagedAccount(for: .codex, id: account.id) }
+                    } label: {
+                        HStack(spacing: 5) {
+                            if isSwitching { ProgressView().controlSize(.mini) }
+                            Text(isSwitching ? (store.accountSessionActionStatus ?? "Switching account…") : "Activate")
+                        }
+                    }
                         .buttonStyle(.bordered).controlSize(.small)
-                        .disabled(store.codexAccountActionInFlight || store.refreshing.contains(.codex))
+                        .disabled(store.accountSessionActionInFlight || store.refreshing.contains(.codex) || store.refreshingManagedAccounts.contains(account.id))
                 }
+                Button {
+                    managedAccountPendingRemoval = PendingManagedAccountRemoval(provider: .codex, account: account)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Remove saved account")
+                .accessibilityLabel("Remove saved account: \(account.label)")
+                .disabled(store.accountSessionActionInFlight || store.refreshing.contains(.codex) || store.refreshingManagedAccounts.contains(account.id))
+              }
+              if let error = store.managedAccountErrors[.codex]?[account.id] {
+                  SettingsErrorText(text: error)
+              }
             }.padding(.vertical, 4)
         }
         HStack {
@@ -1301,17 +1375,42 @@ private struct ProviderAndAccountSettingsPage: View {
             .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
         ForEach(store.claudeCodeAccounts) { account in
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(account.label).font(.system(size: 12, weight: .medium))
-                    Text(account.id == store.claudeCodeInUseAccountID ? "In use" : "Saved")
-                        .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(account.label).font(.system(size: 12, weight: .medium))
+                        let isSwitching = store.accountSessionActionProvider == .claude
+                            && store.accountSessionActionAccountID == account.id
+                        Text(isSwitching ? (store.accountSessionActionStatus ?? "Switching account…") : account.id == store.claudeCodeInUseAccountID ? "In use" : "Saved")
+                            .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
+                    }
+                    Spacer()
+                    if account.id != store.claudeCodeInUseAccountID {
+                        let isSwitching = store.accountSessionActionProvider == .claude
+                            && store.accountSessionActionAccountID == account.id
+                        Button {
+                            Task { await store.activateManagedAccount(for: .claude, id: account.id) }
+                        } label: {
+                            HStack(spacing: 5) {
+                                if isSwitching { ProgressView().controlSize(.mini) }
+                                Text(isSwitching ? (store.accountSessionActionStatus ?? "Switching account…") : "Activate")
+                            }
+                        }
+                            .buttonStyle(.bordered).controlSize(.small)
+                            .disabled(store.accountSessionActionInFlight || store.refreshing.contains(.claude) || store.refreshingManagedAccounts.contains(account.id))
+                    }
+                    Button {
+                    managedAccountPendingRemoval = PendingManagedAccountRemoval(provider: .claude, account: account)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    .help("Remove saved account")
+                    .accessibilityLabel("Remove saved account: \(account.label)")
+                    .disabled(store.accountSessionActionInFlight || store.refreshing.contains(.claude) || store.refreshingManagedAccounts.contains(account.id))
                 }
-                Spacer()
-                if account.id != store.claudeCodeInUseAccountID {
-                    Button("Activate") { Task { await store.activateManagedAccount(for: .claude, id: account.id) } }
-                        .buttonStyle(.bordered).controlSize(.small)
-                        .disabled(store.refreshing.contains(.claude) || store.refreshingManagedAccounts.contains(account.id))
+                if let error = store.managedAccountErrors[.claude]?[account.id] {
+                    SettingsErrorText(text: error)
                 }
             }
             .padding(.vertical, 4)
@@ -1372,7 +1471,7 @@ private struct ProviderAndAccountSettingsPage: View {
                         .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
                 }
                 Button {
-                    antigravityAccountPendingRemoval = account
+                    managedAccountPendingRemoval = PendingManagedAccountRemoval(antigravity: account)
                 } label: {
                     Image(systemName: "trash")
                 }
@@ -1380,7 +1479,7 @@ private struct ProviderAndAccountSettingsPage: View {
                 .controlSize(.small)
                 .help("Remove saved Antigravity account")
                 .accessibilityLabel("Remove \(account.displayName)")
-                .disabled(store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity))
+                .disabled(store.accountSessionActionInFlight || store.antigravityAccountSwitchInFlight || store.refreshing.contains(.antigravity) || store.refreshingManagedAccounts.contains(account.id))
             }
             .padding(.vertical, 5)
         }
@@ -1430,6 +1529,15 @@ private struct ProviderAndAccountSettingsPage: View {
                         .buttonStyle(.bordered).controlSize(.small)
                         .disabled(store.claudeDesktopAppRunning || store.claudeDesktopAccountActionInFlight)
                 }
+                Button {
+                    managedAccountPendingRemoval = PendingManagedAccountRemoval(provider: .claude, account: account, isClaudeDesktop: true)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered).controlSize(.small)
+                .help("Remove saved account")
+                .accessibilityLabel("Remove saved account: \(account.label)")
+                .disabled(store.claudeDesktopAppRunning || store.claudeDesktopAccountActionInFlight || store.refreshingManagedAccounts.contains(account.id))
             }.padding(.vertical, 5)
         }
 

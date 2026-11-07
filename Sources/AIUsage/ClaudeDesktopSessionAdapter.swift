@@ -40,6 +40,24 @@ struct ClaudeDesktopSessionAdapter {
                 try Self.recover(journal: journal, live: live, parkedRoot: parked,
                                  fileManager: fm.value)
             },
+            removeAccountResource: { account, isInUse in
+                guard !isAppRunning() else { throw ClaudeDesktopSessionError.appRunning }
+                // The active record points at the live Claude Desktop data directory.
+                // Removing its index entry must leave the live login intact.
+                guard !isInUse else { return }
+                let reference = URL(fileURLWithPath: account.sessionReference, isDirectory: true).standardizedFileURL
+                guard reference.deletingLastPathComponent() == parked,
+                      reference.lastPathComponent.hasPrefix("parked-") else { return }
+                try Self.validateRoots(live: live, parkedRoot: parked, fileManager: fm.value)
+                var referenceInfo = stat()
+                guard lstat(reference.path, &referenceInfo) == 0 else {
+                    if errno == ENOENT { return }
+                    throw ClaudeDesktopSessionError.unreadableSession
+                }
+                try Self.validateDataRoot(reference, fileManager: fm.value)
+                try fm.value.removeItem(at: reference)
+                try Self.syncDirectory(parked)
+            },
             fileManager: fileManager
         )
     }
@@ -227,6 +245,8 @@ struct ClaudeDesktopSessionAdapter {
         try validateRoots(live: live, parkedRoot: parkedRoot, fileManager: fm)
         switch journal.operation {
         case .importSession:
+            break
+        case .removeAccount:
             break
         case .stash:
             let parked = parkedRoot.appendingPathComponent("parked-\(safeComponent(journal.accountID))")

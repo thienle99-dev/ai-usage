@@ -171,6 +171,15 @@
 "Could not refresh the Claude Code session." = "Không thể làm mới phiên Claude Code.";
 "Claude Code token refresh returned no HTTP response." = "Không nhận được phản hồi HTTP khi làm mới token Claude Code.";
 "Claude Code token refresh returned an invalid response." = "Phản hồi làm mới token Claude Code không hợp lệ.";
+"Claude Code credentials changed during quota refresh. Refresh this account before switching." = "Thông tin đăng nhập Claude Code đã thay đổi trong lúc làm mới quota. Hãy làm mới tài khoản này trước khi chuyển đổi.";
+"Waiting for usage refresh…" = "Đang chờ làm mới dữ liệu sử dụng…";
+"Switching account…" = "Đang chuyển tài khoản…";
+"Account switched. Refreshing usage…" = "Đã chuyển tài khoản. Đang làm mới mức sử dụng…";
+"Account switch failed" = "Chuyển tài khoản thất bại";
+"Account switched" = "Đã chuyển tài khoản";
+"%@ is now using %@." = "%@ hiện đang sử dụng tài khoản %@.";
+"Could not switch %@ to %@: %@" = "Không thể chuyển %@ sang %@: %@";
+"Unknown error" = "Lỗi không xác định";
 "%d days to renew" = "%d ngày nữa gia hạn";
 "1 day to renew" = "1 ngày nữa gia hạn";
 "Save the current account, then sign in with Antigravity CLI in Terminal." = "Lưu tài khoản hiện tại, rồi đăng nhập bằng Antigravity CLI trong Terminal.";
@@ -181,3 +190,11 @@
 "The new Antigravity account could not be saved." = "Không thể lưu tài khoản Antigravity mới.";
 "Terminal.app could not be found." = "Không tìm thấy Terminal.app.";
 "Antigravity CLI (agy) not found. Install it, then try again." = "Không tìm thấy Antigravity CLI (agy). Hãy cài đặt rồi thử lại.";
+"Remove saved account?" = "Xóa tài khoản đã lưu?";
+"This deletes the saved Claude Desktop session folder. If it is the current session, the live login stays in place. Quit Claude Desktop before deleting." = "Thao tác này xóa thư mục phiên Claude Desktop đã lưu. Nếu đó là phiên hiện tại, đăng nhập đang chạy vẫn được giữ. Hãy thoát Claude Desktop trước khi xóa.";
+"This removes the saved Codex account and its AI Usage Monitor session copy. The live Codex CLI login stays in place." = "Thao tác này xóa tài khoản Codex đã lưu và bản phiên AI Usage Monitor tạo ra. Phiên đăng nhập Codex CLI đang chạy vẫn được giữ.";
+"This removes the saved Claude Code credential from AI Usage Monitor’s Keychain. The live Claude Code CLI login stays in place." = "Thao tác này xóa thông tin Claude Code đã lưu trong Keychain của AI Usage Monitor. Phiên đăng nhập Claude Code CLI đang chạy vẫn được giữ.";
+"This removes the saved account from AI Usage Monitor." = "Thao tác này xóa tài khoản đã lưu khỏi AI Usage Monitor.";
+"Wait for the account operation to finish, then try again." = "Hãy chờ thao tác tài khoản hiện tại hoàn tất rồi thử lại.";
+"Quit Claude Desktop and finish account operations before deleting a saved session." = "Hãy thoát Claude Desktop và hoàn tất thao tác tài khoản trước khi xóa phiên đã lưu.";
+"Wait for the Antigravity refresh or account switch to finish, then try again." = "Hãy chờ làm mới Antigravity hoặc chuyển tài khoản hoàn tất rồi thử lại.";

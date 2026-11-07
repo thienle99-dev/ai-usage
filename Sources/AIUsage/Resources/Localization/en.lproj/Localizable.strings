@@ -171,6 +171,15 @@
 "Could not refresh the Claude Code session." = "Could not refresh the Claude Code session.";
 "Claude Code token refresh returned no HTTP response." = "Claude Code token refresh returned no HTTP response.";
 "Claude Code token refresh returned an invalid response." = "Claude Code token refresh returned an invalid response.";
+"Claude Code credentials changed during quota refresh. Refresh this account before switching." = "Claude Code credentials changed during quota refresh. Refresh this account before switching.";
+"Waiting for usage refresh…" = "Waiting for usage refresh…";
+"Switching account…" = "Switching account…";
+"Account switched. Refreshing usage…" = "Account switched. Refreshing usage…";
+"Account switch failed" = "Account switch failed";
+"Account switched" = "Account switched";
+"%@ is now using %@." = "%@ is now using %@.";
+"Could not switch %@ to %@: %@" = "Could not switch %@ to %@: %@";
+"Unknown error" = "Unknown error";
 "%d days to renew" = "%d days to renew";
 "1 day to renew" = "1 day to renew";
 "Save the current account, then sign in with Antigravity CLI in Terminal." = "Save the current account, then sign in with Antigravity CLI in Terminal.";
@@ -181,3 +190,11 @@
 "The new Antigravity account could not be saved." = "The new Antigravity account could not be saved.";
 "Terminal.app could not be found." = "Terminal.app could not be found.";
 "Antigravity CLI (agy) not found. Install it, then try again." = "Antigravity CLI (agy) not found. Install it, then try again.";
+"Remove saved account?" = "Remove saved account?";
+"This deletes the saved Claude Desktop session folder. If it is the current session, the live login stays in place. Quit Claude Desktop before deleting." = "This deletes the saved Claude Desktop session folder. If it is the current session, the live login stays in place. Quit Claude Desktop before deleting.";
+"This removes the saved Codex account and its AI Usage Monitor session copy. The live Codex CLI login stays in place." = "This removes the saved Codex account and its AI Usage Monitor session copy. The live Codex CLI login stays in place.";
+"This removes the saved Claude Code credential from AI Usage Monitor’s Keychain. The live Claude Code CLI login stays in place." = "This removes the saved Claude Code credential from AI Usage Monitor’s Keychain. The live Claude Code CLI login stays in place.";
+"This removes the saved account from AI Usage Monitor." = "This removes the saved account from AI Usage Monitor.";
+"Wait for the account operation to finish, then try again." = "Wait for the account operation to finish, then try again.";
+"Quit Claude Desktop and finish account operations before deleting a saved session." = "Quit Claude Desktop and finish account operations before deleting a saved session.";
+"Wait for the Antigravity refresh or account switch to finish, then try again." = "Wait for the Antigravity refresh or account switch to finish, then try again.";

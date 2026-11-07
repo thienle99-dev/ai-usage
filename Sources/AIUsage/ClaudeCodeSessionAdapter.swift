@@ -7,7 +7,11 @@ import Security
 struct ClaudeCodeSessionAdapter {
     let manager: DurableAccountSessionManager
 
-    init(configDirectory: URL, indexURL: URL) {
+    init(
+        configDirectory: URL,
+        indexURL: URL,
+        credentialStore: any ManagedClaudeCredentialStoring = KeychainManagedClaudeCredentialStore()
+    ) {
         let config = configDirectory.standardizedFileURL
         manager = DurableAccountSessionManager(
             tool: .claudeCode,
@@ -21,18 +25,72 @@ struct ClaudeCodeSessionAdapter {
             },
             stage: { source, accountID in
                 guard let data = source.data(using: .utf8) else { throw ClaudeCodeSessionError.invalidCredential }
-                try ClaudeCodeCredentialVault.saveManaged(data, accountID: accountID)
+                try credentialStore.save(data, accountID: accountID)
+                guard try credentialStore.load(accountID: accountID) == data else {
+                    throw ClaudeCodeSessionError.managedCredentialVerificationFailed
+                }
                 return ClaudeCodeCredentialVault.reference(accountID)
             },
             activate: { reference in
                 guard let accountID = ClaudeCodeCredentialVault.accountID(from: reference) else {
                     throw ClaudeCodeSessionError.invalidReference
                 }
-                let data = try ClaudeCodeCredentialVault.managedCredential(accountID: accountID)
+                let data = try credentialStore.load(accountID: accountID)
                 try ClaudeCodeCredentialVault.installLive(data, configDirectory: config)
                 try ClaudeCodeCredentialVault.updateAccountMetadata(data, configDirectory: config)
+            },
+            recoverInterrupted: { journal in
+                try Self.recoverInterruptedActivation(journal, configDirectory: config)
+            },
+            importIdentityMatches: { existing, fingerprint, label in
+                existing.identityFingerprint == fingerprint || Self.sameEmail(existing.label, label)
+            },
+            removeMergedAccount: { account in
+                guard let accountID = ClaudeCodeCredentialVault.accountID(from: account.sessionReference) else { return }
+                try? credentialStore.remove(accountID: accountID)
+            },
+            removeAccountResource: { account, _ in
+                guard let accountID = ClaudeCodeCredentialVault.accountID(from: account.sessionReference) else { return }
+                try credentialStore.remove(accountID: accountID)
             }
         )
+    }
+
+    static func sameEmail(_ lhs: String, _ rhs: String?) -> Bool {
+        guard let rhs,
+              let leftEmail = emailPart(lhs),
+              let rightEmail = emailPart(rhs) else { return false }
+        return leftEmail.caseInsensitiveCompare(rightEmail) == .orderedSame
+    }
+
+    private static func emailPart(_ label: String) -> String? {
+        let email = label.components(separatedBy: " · ").first?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let email, email.contains("@") else { return nil }
+        return email
+    }
+
+    private static func recoverInterruptedActivation(_ journal: AccountSessionJournal, configDirectory: URL) throws {
+        guard journal.operation == .activate, journal.tool == .claudeCode else { return }
+        guard let stagedReference = journal.stagedReference else {
+            let live = try ClaudeCodeCredentialVault.nativeCredential(configDirectory: configDirectory)
+            let liveBundle = ClaudeCodeCredentialVault.sessionBundle(credential: live, configDirectory: configDirectory)
+            guard Self.fingerprint(liveBundle) == journal.previousFingerprint else {
+                throw AccountSessionError.recoveryRequired("the previous Claude Code credential was not durably staged")
+            }
+            return
+        }
+        guard let previousID = journal.previousID,
+              ClaudeCodeCredentialVault.accountID(from: stagedReference) == previousID else {
+            throw AccountSessionError.recoveryRequired("the previous Claude Code credential has no recoverable vault entry")
+        }
+
+        do {
+            let previousCredential = try ClaudeCodeCredentialVault.managedCredential(accountID: previousID)
+            try ClaudeCodeCredentialVault.installLive(previousCredential, configDirectory: configDirectory)
+            try ClaudeCodeCredentialVault.updateAccountMetadata(previousCredential, configDirectory: configDirectory)
+        } catch {
+            throw AccountSessionError.recoveryRequired("the previous Claude Code credential could not be restored from Keychain")
+        }
     }
 
     static func fingerprint(_ data: Data) -> String {
@@ -81,7 +139,7 @@ struct ClaudeCodeSessionAdapter {
 }
 
 enum ClaudeCodeSessionError: LocalizedError {
-    case invalidCredential, invalidReference, keychain(OSStatus), missingCredential
+    case invalidCredential, invalidReference, keychain(OSStatus), missingCredential, credentialChangedDuringRefresh, managedCredentialVerificationFailed
 
     var errorDescription: String? {
         switch self {
@@ -89,6 +147,8 @@ enum ClaudeCodeSessionError: LocalizedError {
         case .invalidReference: String(localized: "The saved Claude Code credential reference is invalid.")
         case .keychain: String(localized: "Could not access Claude Code credentials in Keychain.")
         case .missingCredential: String(localized: "Sign in to Claude Code before saving this account.")
+        case .credentialChangedDuringRefresh: String(localized: "Claude Code credentials changed during quota refresh. Refresh this account before switching.")
+        case .managedCredentialVerificationFailed: String(localized: "The saved Claude Code credential could not be verified.")
         }
     }
 }
@@ -159,6 +219,11 @@ enum ClaudeCodeCredentialVault {
             if case .keychain(let status) = error { throw ClaudeCodeSessionError.keychain(status) }
             throw error
         }
+    }
+
+    static func deleteManagedCredential(accountID: String) throws {
+        try AIUsageCredentialVault.remove(managedCredentialKey(accountID))
+        try AIUsageCredentialVault.deleteLegacyData(service: managedService, account: accountID)
     }
 
     private static func managedCredentialKey(_ accountID: String) -> String { "claude/managed/\(accountID)" }
@@ -251,6 +316,32 @@ enum ClaudeCodeCredentialVault {
         }
     }
 
+    static func synchronizeRefreshedLiveCredential(previous: Data, updated: Data, configDirectory: URL) throws {
+        let live = try nativeCredential(configDirectory: configDirectory)
+        if sameOAuthTokens(live, updated) {
+            try updateAccountMetadata(updated, configDirectory: configDirectory)
+            return
+        }
+        guard sameOAuthTokens(live, previous) else {
+            throw ClaudeCodeSessionError.credentialChangedDuringRefresh
+        }
+        try installLive(updated, configDirectory: configDirectory)
+        try updateAccountMetadata(updated, configDirectory: configDirectory)
+    }
+
+    private static func sameOAuthTokens(_ lhs: Data, _ rhs: Data) -> Bool {
+        func tokens(_ data: Data) -> (access: String?, refresh: String?) {
+            let (credential, _) = sessionParts(data)
+            let oauth = credential["claudeAiOauth"] as? [String: Any] ?? credential
+            return (oauth["accessToken"] as? String, oauth["refreshToken"] as? String)
+        }
+        let left = tokens(lhs)
+        let right = tokens(rhs)
+        guard let leftAccess = left.access, let leftRefresh = left.refresh,
+              let rightAccess = right.access, let rightRefresh = right.refresh else { return false }
+        return leftAccess == rightAccess && leftRefresh == rightRefresh
+    }
+
     static func removeTemporary(configDirectory: URL) {
         let query = baseQuery(service: scopedService(configDirectory: configDirectory))
         SecItemDelete(query as CFDictionary)
@@ -260,16 +351,17 @@ enum ClaudeCodeCredentialVault {
         let metadataURL = configDirectory.appendingPathComponent(".claude.json")
         let (credential, bundledMetadata) = sessionParts(data)
         var metadata = (try? JSONSerialization.jsonObject(with: Data(contentsOf: metadataURL))) as? [String: Any] ?? [:]
-        if let account = bundledMetadata["oauthAccount"] as? [String: Any] { metadata["oauthAccount"] = account }
-        if let account = credential["oauthAccount"] as? [String: Any] { metadata["oauthAccount"] = account }
-        if let oauth = credential["claudeAiOauth"] as? [String: Any] {
-            let account = metadata["oauthAccount"] as? [String: Any] ?? [:]
-            var updated = account
-            for key in ["email", "accountUuid", "organizationUuid", "organizationRole"] {
-                if let value = oauth[key] { updated[key] = value }
-            }
-            if !updated.isEmpty { metadata["oauthAccount"] = updated }
+        var account = bundledMetadata["oauthAccount"] as? [String: Any] ?? [:]
+        if let credentialAccount = credential["oauthAccount"] as? [String: Any] {
+            account.merge(credentialAccount) { _, new in new }
         }
+        if let oauth = credential["claudeAiOauth"] as? [String: Any] {
+            for key in ["email", "accountUuid", "organizationUuid", "organizationRole"] {
+                if let value = oauth[key] { account[key] = value }
+            }
+        }
+        if account.isEmpty { metadata.removeValue(forKey: "oauthAccount") }
+        else { metadata["oauthAccount"] = account }
         guard JSONSerialization.isValidJSONObject(metadata) else { return }
         try FileManager.default.createDirectory(at: configDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try JSONSerialization.data(withJSONObject: metadata, options: [.sortedKeys]).write(to: metadataURL, options: .atomic)
@@ -347,6 +439,7 @@ enum ClaudeCodeCredentialVault {
 protocol ManagedClaudeCredentialStoring: Sendable {
     func load(accountID: String) throws -> Data
     func save(_ data: Data, accountID: String) throws
+    func remove(accountID: String) throws
 }
 
 struct KeychainManagedClaudeCredentialStore: ManagedClaudeCredentialStoring {
@@ -356,5 +449,9 @@ struct KeychainManagedClaudeCredentialStore: ManagedClaudeCredentialStoring {
 
     func save(_ data: Data, accountID: String) throws {
         try ClaudeCodeCredentialVault.saveManaged(data, accountID: accountID)
+    }
+
+    func remove(accountID: String) throws {
+        try ClaudeCodeCredentialVault.deleteManagedCredential(accountID: accountID)
     }
 }

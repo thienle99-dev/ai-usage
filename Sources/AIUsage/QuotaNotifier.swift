@@ -70,6 +70,42 @@ struct UserNotificationQuotaDeliverer: QuotaNotificationDelivering {
     }
 }
 
+enum AccountSwitchNotifier {
+    static func deliver(provider: Provider, account: String, succeeded: Bool, error: String? = nil) async {
+        guard NotificationBundleSupport.isPackagedApp else { return }
+        let content = UNMutableNotificationContent()
+        if succeeded {
+            content.title = String(localized: "Account switched")
+            content.body = String(
+                format: String(localized: "%@ is now using %@."),
+                locale: .current,
+                arguments: [provider.displayName, account]
+            )
+        } else {
+            content.title = String(localized: "Account switch failed")
+            content.body = String(
+                format: String(localized: "Could not switch %@ to %@: %@"),
+                locale: .current,
+                arguments: [provider.displayName, account, error ?? String(localized: "Unknown error")]
+            )
+            content.sound = .default
+        }
+        let request = UNNotificationRequest(
+            identifier: "aiusage.account-switch.\(provider.rawValue).\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        try? await UNUserNotificationCenter.current().add(request)
+    }
+}
+
+private enum NotificationBundleSupport {
+    static var isPackagedApp: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+            && Bundle.main.bundleIdentifier != nil
+    }
+}
+
 /// Pure per-window episode policy: each window fires at most one warning and
 /// one critical until it recovers, then fires at most one restored and
 /// re-arms. Recovery requires dropping below the warning threshold minus

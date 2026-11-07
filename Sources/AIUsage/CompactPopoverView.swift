@@ -542,6 +542,8 @@ private struct CompactProviderSection: View {
             let selected = account.id == activeID
             let quota = cached[account.id]
             let needsLogin = store.managedAccountStatuses[managedProvider]?[account.id] == .authenticationRequired
+            let isSwitching = store.accountSessionActionProvider == managedProvider
+                && store.accountSessionActionAccountID == account.id
             let accountAction = {
                 if needsLogin {
                     accountLogin.select(managedProvider)
@@ -559,7 +561,11 @@ private struct CompactProviderSection: View {
                 selectedAction: accountAction,
                 inactiveAction: accountAction,
                 windows: quota?.windows ?? [],
-                status: quota?.status ?? store.managedAccountStatuses[managedProvider]?[account.id] ?? .unavailable
+                status: quota?.status ?? store.managedAccountStatuses[managedProvider]?[account.id] ?? .unavailable,
+                error: store.managedAccountErrors[managedProvider]?[account.id],
+                isSwitching: isSwitching,
+                progressMessage: isSwitching ? store.accountSessionActionStatus : nil,
+                actionDisabled: store.accountSessionActionInFlight && !isSwitching
             )
             return row
         }
@@ -593,7 +599,11 @@ private struct CompactProviderSection: View {
         inactiveAction: (() -> Void)? = nil,
         windows: [UsageWindow] = [],
         status: ProviderStatus? = nil,
-        plan: String? = nil
+        plan: String? = nil,
+        error: String? = nil,
+        isSwitching: Bool = false,
+        progressMessage: String? = nil,
+        actionDisabled: Bool = false
     ) -> CompactAccountRowModel {
         let account = accountParts(name)
         return CompactAccountRowModel(
@@ -603,7 +613,11 @@ private struct CompactProviderSection: View {
             selected: selected,
             action: selected ? selectedAction : (inactiveAction ?? selectedAction),
             windows: windows,
-            status: status
+            status: status,
+            error: error,
+            isSwitching: isSwitching,
+            progressMessage: progressMessage,
+            actionDisabled: actionDisabled
         )
     }
 
@@ -625,6 +639,10 @@ private struct CompactAccountRowModel: Identifiable {
     let action: () -> Void
     let windows: [UsageWindow]
     let status: ProviderStatus?
+    let error: String?
+    let isSwitching: Bool
+    let progressMessage: String?
+    let actionDisabled: Bool
 }
 
 private struct CompactAccountRow: View {
@@ -658,12 +676,16 @@ private struct CompactAccountRow: View {
         Button(action: row.action) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(PopoverColorTokens.selectedIndicator(provider, colorScheme: colorScheme))
-                        .frame(width: 12)
-                        .opacity(row.selected ? 1 : 0)
-                        .accessibilityHidden(true)
+                    if row.isSwitching {
+                        ProgressView().controlSize(.mini).frame(width: 12)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(PopoverColorTokens.selectedIndicator(provider, colorScheme: colorScheme))
+                            .frame(width: 12)
+                            .opacity(row.selected ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
                     Text(row.name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(row.selected
@@ -685,9 +707,9 @@ private struct CompactAccountRow: View {
                 }
                 HStack(spacing: 6) {
                     Color.clear.frame(width: 12)
-                    Text(usageSummary)
+                    Text(row.progressMessage ?? row.error ?? usageSummary)
                         .font(.system(size: 12, weight: .regular).monospacedDigit())
-                        .foregroundStyle(status == .authenticationRequired && row.selected
+                        .foregroundStyle(row.error != nil && !row.isSwitching || (status == .authenticationRequired && row.selected)
                             ? UsageTheme.critical
                             : PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
                         .lineLimit(1)
@@ -734,6 +756,7 @@ private struct CompactAccountRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(row.actionDisabled)
         .onHover { isHovered = $0 }
         .help(detailTooltip)
         .accessibilityLabel(detailTooltip)
@@ -817,6 +840,8 @@ private struct CompactAccountRow: View {
     private var detailTooltip: String {
         let state = status.title
         var lines = ["\(providerLabel) · \(state)", row.name]
+        if let progressMessage = row.progressMessage { lines.append(progressMessage) }
+        if let error = row.error { lines.append(error) }
         if let plan = row.plan, !plan.isEmpty {
             lines.append(String(
                 format: AppLocalization.string("Plan: %@", locale: locale),

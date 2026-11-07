@@ -32,6 +32,17 @@ private final class LockedFlag: @unchecked Sendable {
     func getAndClear() -> Bool { lock.lock(); defer { lock.unlock() }; let result = value; value = false; return result }
 }
 
+private func isolatedAccountManager(tool: ManagedAccountTool, indexURL: URL) -> DurableAccountSessionManager {
+    let identity = LockedAccountFixture(reference: "fixture-session", fingerprint: "fixture-identity")
+    return DurableAccountSessionManager(
+        tool: tool,
+        indexURL: indexURL,
+        identify: { identity.read() },
+        stage: { _, accountID in "fixture-\(accountID)" },
+        activate: { _ in }
+    )
+}
+
 private actor FixtureHTTPDataLoader: HTTPDataLoading {
     private var fixtures: [HTTPFixture]
     private let routes: [String: HTTPFixture]
@@ -82,6 +93,11 @@ private final class FixtureManagedClaudeCredentialStore: ManagedClaudeCredential
     func save(_ data: Data, accountID: String) throws {
         lock.lock(); defer { lock.unlock() }
         credentials[accountID] = data
+    }
+
+    func remove(accountID: String) throws {
+        lock.lock(); defer { lock.unlock() }
+        credentials.removeValue(forKey: accountID)
     }
 }
 
@@ -293,6 +309,43 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(codexMarker(in: URL(fileURLWithPath: record.sessionReference)), "before")
     }
 
+    @MainActor
+    func testCodexAccountRemovalDeletesOnlyItsManagedSessionCopy() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let live = root.appendingPathComponent("live", isDirectory: true)
+        let spareRoot = root.appendingPathComponent("spares", isDirectory: true)
+        try makeCodexHomeDir(at: live, marker: "live-session")
+        let adapter = CodexSessionAdapter(
+            liveHomeURL: live,
+            spareRootURL: spareRoot,
+            indexURL: root.appendingPathComponent("index.json"),
+            identify: { (live.path, "fixture-account", "fixture@example.com") }
+        )
+
+        let account = try adapter.manager.importSession(reference: live.path, fingerprint: "fixture-account", label: "fixture@example.com")
+        let managedCopy = URL(fileURLWithPath: account.sessionReference, isDirectory: true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: managedCopy.appendingPathComponent("auth.json").path))
+        try adapter.manager.activateAccount(account.id)
+        let store = UsageStore(
+            providers: [],
+            defaults: UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!,
+            startImmediately: false,
+            codexAccountManager: adapter.manager,
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: root.appendingPathComponent("claude-index.json"))
+        )
+
+        store.removeManagedAccount(for: .codex, id: account.id)
+
+        XCTAssertNil(store.managedAccountErrors[.codex]?[account.id], store.managedAccountErrors[.codex]?[account.id] ?? "")
+        XCTAssertNil(store.codexAccountError, store.codexAccountError ?? "")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: managedCopy.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("auth.json").path))
+        XCTAssertTrue(store.codexAccounts.isEmpty)
+        XCTAssertTrue(try adapter.manager.currentIndex().accounts.isEmpty)
+        XCTAssertNil(try adapter.manager.currentIndex().inUse[.codex])
+    }
+
     func testCodexAdapterStageThenActivateRoundTripsAndParksOtherLogin() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -428,6 +481,87 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(index.inUse[.codex], active.id)
     }
 
+    func testClaudeImportMergesAccountsByEmailAndKeepsActiveRecord() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let indexURL = root.appendingPathComponent("state.json")
+        let live = LockedAccountFixture(reference: "live-current", fingerprint: "fp-current")
+        let exactMatcher = DurableAccountSessionManager(
+            tool: .claudeCode,
+            indexURL: indexURL,
+            identify: { live.read() },
+            stage: { _, id in ClaudeCodeCredentialVault.reference(id) },
+            activate: { _ in }
+        )
+        let current = try exactMatcher.registerCurrentAccount(label: "current@example.com · Pro")
+        let firstDuplicate = try exactMatcher.importSession(
+            reference: "first-session", fingerprint: "fp-account", label: "person@example.com · Pro"
+        )
+        let activeDuplicate = try exactMatcher.importSession(
+            reference: "second-session", fingerprint: "fp-organization", label: "person@example.com · Pro"
+        )
+        try exactMatcher.activateAccount(activeDuplicate.id)
+
+        let credentialStore = FixtureManagedClaudeCredentialStore(credentials: [
+            firstDuplicate.id: Data("old-first".utf8),
+            activeDuplicate.id: Data("old-active".utf8)
+        ])
+        let adapter = ClaudeCodeSessionAdapter(
+            configDirectory: root.appendingPathComponent("claude-config", isDirectory: true),
+            indexURL: indexURL,
+            credentialStore: credentialStore
+        )
+
+        let updated = try adapter.manager.importSession(
+            reference: "new-session", fingerprint: "fp-new-organization", label: "person@example.com · Max"
+        )
+        let index = try adapter.manager.currentIndex()
+
+        XCTAssertEqual(updated.id, activeDuplicate.id)
+        XCTAssertEqual(updated.identityFingerprint, "fp-new-organization")
+        XCTAssertEqual(updated.label, "person@example.com · Max")
+        XCTAssertEqual(updated.sessionReference, ClaudeCodeCredentialVault.reference(activeDuplicate.id))
+        XCTAssertEqual(index.accounts.count, 2)
+        XCTAssertTrue(index.accounts.contains(where: { $0.id == current.id }))
+        XCTAssertTrue(index.accounts.contains(where: { $0.id == activeDuplicate.id }))
+        XCTAssertFalse(index.accounts.contains(where: { $0.id == firstDuplicate.id }))
+        XCTAssertEqual(index.inUse[.claudeCode], activeDuplicate.id)
+        XCTAssertEqual(try credentialStore.load(accountID: activeDuplicate.id), Data("new-session".utf8))
+        XCTAssertThrowsError(try credentialStore.load(accountID: firstDuplicate.id))
+        XCTAssertTrue(ClaudeCodeSessionAdapter.sameEmail("person@example.com · Pro", "PERSON@example.com · Max"))
+        XCTAssertFalse(ClaudeCodeSessionAdapter.sameEmail("person@example.com · Pro", "other@example.com · Pro"))
+        XCTAssertFalse(ClaudeCodeSessionAdapter.sameEmail("person@example.com · Pro", nil))
+    }
+
+    @MainActor
+    func testClaudeCodeAccountRemovalDeletesManagedCredential() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let credentialStore = FixtureManagedClaudeCredentialStore(credentials: [:])
+        let adapter = ClaudeCodeSessionAdapter(
+            configDirectory: root.appendingPathComponent("claude-config", isDirectory: true),
+            indexURL: root.appendingPathComponent("index.json"),
+            credentialStore: credentialStore
+        )
+        let credential = Data("claude-session-fixture".utf8)
+        let account = try adapter.manager.importSession(reference: String(decoding: credential, as: UTF8.self), fingerprint: "claude-fingerprint", label: "claude@example.com")
+
+        XCTAssertEqual(try credentialStore.load(accountID: account.id), credential)
+        let store = UsageStore(
+            providers: [],
+            defaults: UserDefaults(suiteName: "AIUsageTests.\(UUID().uuidString)")!,
+            startImmediately: false,
+            codexAccountManager: isolatedAccountManager(tool: .codex, indexURL: root.appendingPathComponent("codex-index.json")),
+            claudeCodeAccountManager: adapter.manager
+        )
+        store.removeManagedAccount(for: .claude, id: account.id)
+
+        XCTAssertNil(store.managedAccountErrors[.claude]?[account.id], store.managedAccountErrors[.claude]?[account.id] ?? "")
+        XCTAssertThrowsError(try credentialStore.load(accountID: account.id))
+        XCTAssertTrue(store.claudeCodeAccounts.isEmpty)
+        XCTAssertTrue(try adapter.manager.currentIndex().accounts.isEmpty)
+    }
+
     func testInterruptedImportCanBeRetriedWithoutChangingInUse() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -554,9 +688,13 @@ final class ProviderAndStoreTests: XCTestCase {
         await quotaFetcher.release.signal()
         await refreshTask.value
         await activated.wait()
+        for _ in 0..<100 where store.codexInUseAccountID != accountB.id {
+            try await Task.sleep(for: .milliseconds(10))
+        }
 
         XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.accountID, accountB.id)
         XCTAssertEqual(store.managedAccountSnapshots[.codex]?[accountB.id]?.windows.first?.validUtilization, 21)
+        XCTAssertEqual(store.codexInUseAccountID, accountB.id)
         XCTAssertEqual(try codexManager.currentIndex().inUse[.codex], accountB.id)
     }
 
@@ -777,6 +915,45 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertNil(activeID)
     }
 
+    @MainActor
+    func testAntigravityAccountRemovalDeletesCredentialAndClearsSelection() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suiteName = "AIUsageTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let accountID = "antigravity-fixture-account"
+        let credential = LockedAccountFixture(reference: "", fingerprint: "")
+        let manager = AntigravityAccountVault.managedSessionAdapter(
+            indexURL: root.appendingPathComponent("antigravity-index.json"),
+            defaults: defaults,
+            removeCredential: { reference in credential.set(reference: reference, fingerprint: "deleted") }
+        )
+        let record = ManagedAccountRecord(
+            id: accountID, label: "user@example.com", tool: .antigravity,
+            sessionReference: "credential-reference", identityFingerprint: "identity", registeredAt: .now
+        )
+        try manager.importAccountsOnce([record], migrationID: "antigravity-delete-fixture", activeAccountID: accountID)
+        defaults.set(accountID, forKey: AntigravityAccountVault.activeDefaultsKey)
+
+        let store = UsageStore(
+            providers: [], defaults: defaults, startImmediately: false,
+            codexAccountManager: isolatedAccountManager(tool: .codex, indexURL: root.appendingPathComponent("codex-index.json")),
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: root.appendingPathComponent("claude-index.json")),
+            antigravityAccountManager: manager
+        )
+        XCTAssertEqual(store.antigravityAccounts.map(\.id), [accountID])
+
+        store.removeAntigravityAccount(accountID)
+
+        XCTAssertEqual(credential.read().reference, "credential-reference")
+        XCTAssertEqual(credential.read().fingerprint, "deleted")
+        XCTAssertNil(defaults.string(forKey: AntigravityAccountVault.activeDefaultsKey))
+        XCTAssertTrue(store.antigravityAccounts.isEmpty)
+        XCTAssertTrue(try manager.currentIndex().accounts.isEmpty)
+        XCTAssertNil(try manager.currentIndex().inUse[.antigravity])
+    }
+
     func testClaudeDesktopAdapterMovesSessionsWithoutCopyingAndSwitchesFromSignedOut() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -827,6 +1004,15 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: URL(fileURLWithPath: homePark).appendingPathComponent("Cookies").path))
         XCTAssertEqual(index.inUse[.claudeDesktop], work.id)
         XCTAssertNil(index.journal)
+
+        try adapter.manager.removeAccount(home.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: homePark))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("Cookies").path))
+        try adapter.manager.removeAccount(work.id)
+        let afterRemoval = try adapter.manager.currentIndex()
+        XCTAssertTrue(afterRemoval.accounts.isEmpty)
+        XCTAssertNil(afterRemoval.inUse[.claudeDesktop])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: live.appendingPathComponent("Cookies").path))
     }
 
     func testClaudeDesktopAdapterRefusesToMoveWhileAppIsRunning() throws {
@@ -863,6 +1049,85 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: live.appendingPathComponent("Cookies"), encoding: .utf8), "previous-session")
         XCTAssertEqual(try String(contentsOf: target.appendingPathComponent("Cookies"), encoding: .utf8), "target-session")
         XCTAssertFalse(FileManager.default.fileExists(atPath: previous.appendingPathComponent("Cookies").path))
+    }
+
+    func testAccountRemovalJournalsBeforeCleanupAndRetriesAfterFailure() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let failFirstRemoval = LockedFlag(true)
+        let identity = LockedAccountFixture(reference: "live", fingerprint: "live-fingerprint")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: root.appendingPathComponent("accounts.json"),
+            identify: { identity.read() },
+            stage: { _, accountID in "managed-\(accountID)" },
+            activate: { _ in },
+            removeAccountResource: { _, _ in
+                if failFirstRemoval.getAndClear() { throw CocoaError(.fileWriteUnknown) }
+            }
+        )
+        let account = ManagedAccountRecord(
+            id: "account-to-remove", label: "test@example.com", tool: .codex,
+            sessionReference: "managed-session", identityFingerprint: "account-fingerprint", registeredAt: .now
+        )
+        try manager.importAccountsOnce([account], migrationID: "remove-retry-fixture")
+
+        XCTAssertThrowsError(try manager.removeAccount(account.id))
+        let interruptedIndex = try manager.currentIndex()
+        XCTAssertEqual(interruptedIndex.accounts, [account])
+        XCTAssertEqual(interruptedIndex.journal?.operation, .removeAccount)
+
+        try manager.removeAccount(account.id)
+
+        let completedIndex = try manager.currentIndex()
+        XCTAssertTrue(completedIndex.accounts.isEmpty)
+        XCTAssertNil(completedIndex.journal)
+        XCTAssertNil(completedIndex.inUse[.codex])
+    }
+
+    func testAccountRemovalRetriesWhenFinalIndexCommitFailsAfterCleanup() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let failFinalCommit = LockedFlag(true)
+        let resource = LockedAccountFixture(reference: "present", fingerprint: "")
+        let indexURL = root.appendingPathComponent("accounts.json")
+        let manager = DurableAccountSessionManager(
+            tool: .codex,
+            indexURL: indexURL,
+            identify: { ("live", "live-fingerprint", nil) },
+            stage: { _, accountID in "managed-\(accountID)" },
+            activate: { _ in },
+            removeAccountResource: { _, _ in resource.set(reference: "removed", fingerprint: "") },
+            indexWriter: { data, url, fileManager in
+                if let index = try? JSONDecoder().decode(AccountSessionIndex.self, from: data),
+                   index.accounts.isEmpty, index.journal == nil,
+                   failFinalCommit.getAndClear() {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try data.write(to: url, options: .atomic)
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            }
+        )
+        let account = ManagedAccountRecord(
+            id: "account-to-remove-after-commit-failure", label: "test@example.com", tool: .codex,
+            sessionReference: "managed-session", identityFingerprint: "account-fingerprint", registeredAt: .now
+        )
+        try manager.importAccountsOnce([account], migrationID: "remove-commit-retry-fixture")
+
+        XCTAssertThrowsError(try manager.removeAccount(account.id))
+
+        let interruptedIndex = try manager.currentIndex()
+        XCTAssertEqual(resource.read().reference, "removed")
+        XCTAssertEqual(interruptedIndex.accounts, [account])
+        XCTAssertEqual(interruptedIndex.journal?.operation, .removeAccount)
+
+        try manager.removeAccount(account.id)
+
+        let completedIndex = try manager.currentIndex()
+        XCTAssertTrue(completedIndex.accounts.isEmpty)
+        XCTAssertNil(completedIndex.journal)
+        XCTAssertNil(completedIndex.inUse[.codex])
+        XCTAssertEqual(resource.read().reference, "removed")
     }
 
     func testAccountSessionStashAndActivateRoundTripAndClearJournal() throws {
@@ -986,24 +1251,27 @@ final class ProviderAndStoreTests: XCTestCase {
     @MainActor
     func testAutoStartSettingPersistsAndDispatchesOneCommandPerCooldown() async {
         let defaults = isolatedDefaults()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
         let recorder = AutoStartCommandRecorder()
         let store = UsageStore(
             providers: [AutoStartFixtureProvider(provider: .claude)],
             defaults: defaults,
             startImmediately: false,
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: root.appendingPathComponent("accounts.json")),
             autoStartRunner: recorder
         )
         XCTAssertFalse(store.autoStartUsageWindow)
         store.autoStartUsageWindow = true
         await store.refresh()
-        for _ in 0..<10 {
+        for _ in 0..<100 {
             if !(await recorder.providers()).isEmpty { break }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(10))
         }
         let firstStarts = await recorder.providers()
         XCTAssertEqual(firstStarts, [.claude])
         await store.refresh()
-        for _ in 0..<10 { await Task.yield() }
+        try? await Task.sleep(for: .milliseconds(20))
         let starts = await recorder.providers()
         XCTAssertEqual(starts, [.claude])
         XCTAssertTrue(UsageStore(providers: [], defaults: defaults, startImmediately: false).autoStartUsageWindow)
@@ -1054,12 +1322,15 @@ final class ProviderAndStoreTests: XCTestCase {
     @MainActor
     func testQuotaNotificationsFireOncePerWindowUntilRecovery() async throws {
         let defaults = isolatedDefaults()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
         let recorder = QuotaNotificationRecorder()
         let provider = QuotaFixtureProvider(utilization: 75)
         let store = UsageStore(
             providers: [provider],
             defaults: defaults,
             startImmediately: false,
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: root.appendingPathComponent("accounts.json")),
             quotaDeliverer: recorder
         )
         XCTAssertFalse(store.quotaNotificationsEnabled)
@@ -1098,6 +1369,8 @@ final class ProviderAndStoreTests: XCTestCase {
     @MainActor
     func testQuotaNotificationsStaySilentWhenDisabledOrStale() async throws {
         let defaults = isolatedDefaults()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
         let recorder = QuotaNotificationRecorder()
         let disabled = UsageStore(
             providers: [QuotaFixtureProvider(utilization: 95)],
@@ -1114,6 +1387,7 @@ final class ProviderAndStoreTests: XCTestCase {
             providers: [FixtureProvider(provider: .claude, failure: .network("offline"), delay: .zero, counter: FetchCounter())],
             defaults: isolatedDefaults(),
             startImmediately: false,
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: root.appendingPathComponent("stale-accounts.json")),
             quotaDeliverer: recorder
         )
         staleStore.quotaNotificationsEnabled = true
@@ -1133,12 +1407,12 @@ final class ProviderAndStoreTests: XCTestCase {
 
     @MainActor
     private func waitForDelivered(_ count: Int, recorder: QuotaNotificationRecorder) async throws {
-        for _ in 0..<200 {
+        for _ in 0..<300 {
             if await recorder.delivered.count >= count { return }
-            await Task.yield()
+            try await Task.sleep(for: .milliseconds(10))
         }
         if count > 0 {
-            throw XCTSkip("Timed out waiting for \(count) notifications")
+            XCTFail("Timed out waiting for \(count) notifications")
         }
     }
 
@@ -1549,6 +1823,7 @@ final class ProviderAndStoreTests: XCTestCase {
     func testRefreshKeepsProvidersIndependentAndPreservesStaleSnapshot() async throws {
         let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("snapshots.json")
         defer { try? FileManager.default.removeItem(at: cache.deletingLastPathComponent()) }
+        let accountIndexURL = cache.deletingLastPathComponent().appendingPathComponent("accounts.json")
         let defaults = try XCTUnwrap(UserDefaults(suiteName: UUID().uuidString))
         let codexCounter = FetchCounter()
         let claudeCounter = FetchCounter()
@@ -1559,7 +1834,9 @@ final class ProviderAndStoreTests: XCTestCase {
             ],
             defaults: defaults,
             cacheURL: cache,
-            startImmediately: false
+            startImmediately: false,
+            codexAccountManager: isolatedAccountManager(tool: .codex, indexURL: accountIndexURL),
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: accountIndexURL)
         )
         await first.refresh()
         XCTAssertEqual(first.status(for: .codex), .connected)
@@ -1573,7 +1850,9 @@ final class ProviderAndStoreTests: XCTestCase {
             ],
             defaults: defaults,
             cacheURL: cache,
-            startImmediately: false
+            startImmediately: false,
+            codexAccountManager: isolatedAccountManager(tool: .codex, indexURL: accountIndexURL),
+            claudeCodeAccountManager: isolatedAccountManager(tool: .claudeCode, indexURL: accountIndexURL)
         )
         await second.refresh()
         XCTAssertEqual(second.status(for: .claude), .authenticationRequired)

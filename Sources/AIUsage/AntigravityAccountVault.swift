@@ -22,7 +22,11 @@ enum AntigravityAccountVault {
     static let activeDefaultsKey = "antigravity.activeAccountID"
     private static let keychainService = "com.local.aiusage.antigravity.accounts"
 
-    static func managedSessionAdapter(indexURL: URL, defaults: UserDefaults = .standard) -> DurableAccountSessionManager {
+    static func managedSessionAdapter(
+        indexURL: URL,
+        defaults: UserDefaults = .standard,
+        removeCredential: @escaping @Sendable (String) throws -> Void = AntigravityAccountVault.deleteCredentialData
+    ) -> DurableAccountSessionManager {
         let defaultsBox = SendableDefaults(defaults)
         return DurableAccountSessionManager(
             tool: .antigravity,
@@ -56,6 +60,12 @@ enum AntigravityAccountVault {
                 guard reference == "live" || credentialData(id: reference) != nil else { throw AccountSessionError.accountMissing }
                 if reference == "live" { defaultsBox.value.removeObject(forKey: activeDefaultsKey) }
                 else { defaultsBox.value.set(reference, forKey: activeDefaultsKey) }
+            },
+            removeAccountResource: { account, isInUse in
+                try removeCredential(account.sessionReference)
+                if isInUse || defaultsBox.value.string(forKey: activeDefaultsKey) == account.id {
+                    defaultsBox.value.removeObject(forKey: activeDefaultsKey)
+                }
             }
         )
     }

@@ -47,7 +47,7 @@ struct AccountSessionIndex: Codable, Equatable, Sendable {
 }
 
 struct AccountSessionJournal: Codable, Equatable, Sendable {
-    enum Operation: String, Codable, Sendable { case stash, activate, importSession }
+    enum Operation: String, Codable, Sendable { case stash, activate, importSession, removeAccount }
     var operation: Operation
     var tool: ManagedAccountTool
     var accountID: String
@@ -63,6 +63,10 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     typealias Stage = @Sendable (_ source: String, _ accountID: String) throws -> String
     typealias Activate = @Sendable (_ reference: String) throws -> Void
     typealias IsSafeToChange = @Sendable () throws -> Void
+    typealias ImportIdentityMatches = @Sendable (_ existing: ManagedAccountRecord, _ fingerprint: String, _ label: String?) -> Bool
+    typealias RemoveMergedAccount = @Sendable (_ account: ManagedAccountRecord) -> Void
+    typealias RemoveAccountResource = @Sendable (_ account: ManagedAccountRecord, _ isInUse: Bool) throws -> Void
+    typealias IndexWriter = @Sendable (_ data: Data, _ url: URL, _ fileManager: FileManager) throws -> Void
 
     private let tool: ManagedAccountTool
     private let indexURL: URL
@@ -73,18 +77,32 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     private let safeToChange: IsSafeToChange
     private let movesSessions: Bool
     private let recoverInterrupted: @Sendable (AccountSessionJournal) throws -> Void
+    private let importIdentityMatches: ImportIdentityMatches
+    private let removeMergedAccount: RemoveMergedAccount
+    private let removeAccountResource: RemoveAccountResource
+    private let indexWriter: IndexWriter
     private let fileManager: FileManager
 
     init(tool: ManagedAccountTool, indexURL: URL, identify: @escaping Identify,
          stage: @escaping Stage, activate: @escaping Activate,
          safeToChange: @escaping IsSafeToChange = {}, movesSessions: Bool = false,
          recoverInterrupted: @escaping @Sendable (AccountSessionJournal) throws -> Void = { _ in },
+         importIdentityMatches: @escaping ImportIdentityMatches = { existing, fingerprint, _ in existing.identityFingerprint == fingerprint },
+         removeMergedAccount: @escaping RemoveMergedAccount = { _ in },
+         removeAccountResource: @escaping RemoveAccountResource = { _, _ in },
+         indexWriter: @escaping IndexWriter = { data, url, fileManager in
+             try data.write(to: url, options: .atomic)
+             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+         },
          fileManager: FileManager = .default) {
         self.tool = tool; self.indexURL = indexURL
         self.operationLockURL = indexURL.appendingPathExtension("\(tool.rawValue).operation-lock")
         self.identify = identify
         self.stage = stage; self.activate = activate; self.safeToChange = safeToChange
         self.movesSessions = movesSessions; self.recoverInterrupted = recoverInterrupted
+        self.importIdentityMatches = importIdentityMatches; self.removeMergedAccount = removeMergedAccount
+        self.removeAccountResource = removeAccountResource
+        self.indexWriter = indexWriter
         self.fileManager = fileManager
     }
 
@@ -151,10 +169,18 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
         guard !reference.isEmpty, !fingerprint.isEmpty else { throw AccountSessionError.unidentified }
         return try withIndex { index in
             try settle(&index)
-            if let existingPosition = index.accounts.firstIndex(where: {
-                $0.tool == tool && $0.identityFingerprint == fingerprint
-            }) {
-                let existing = index.accounts[existingPosition]
+            let matchingPositions = index.accounts.indices.filter { position in
+                let existing = index.accounts[position]
+                return existing.tool == tool && importIdentityMatches(existing, fingerprint, label)
+            }
+            if !matchingPositions.isEmpty {
+                let activeID = index.inUse[tool]
+                let keeperPosition = matchingPositions.first(where: { index.accounts[$0].id == activeID }) ?? matchingPositions[0]
+                let existing = index.accounts[keeperPosition]
+                let duplicateRecords = matchingPositions
+                    .filter { $0 != keeperPosition }
+                    .map { index.accounts[$0] }
+                let duplicateIDs = Set(duplicateRecords.map(\.id))
                 index.journal = AccountSessionJournal(
                     operation: .importSession, tool: tool, accountID: existing.id,
                     previousID: index.inUse[tool], previousFingerprint: "", targetFingerprint: fingerprint,
@@ -162,13 +188,21 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
                 )
                 try persist(index)
                 let savedReference = try stage(reference, existing.id)
-                index.accounts[existingPosition].sessionReference = savedReference
+                var updated = existing
+                updated.sessionReference = savedReference
+                updated.identityFingerprint = fingerprint
                 if let label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    index.accounts[existingPosition].label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                    updated.label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                index.accounts[keeperPosition] = updated
+                index.accounts.removeAll { duplicateIDs.contains($0.id) }
+                if let inUseID = index.inUse[tool], duplicateIDs.contains(inUseID) {
+                    index.inUse[tool] = updated.id
                 }
                 index.journal = nil
                 try persist(index)
-                return index.accounts[existingPosition]
+                for duplicate in duplicateRecords { removeMergedAccount(duplicate) }
+                return updated
             }
 
             let record = ManagedAccountRecord(
@@ -262,10 +296,16 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     func removeAccount(_ id: String) throws {
         try withIndex { index in
             try settle(&index)
-            guard let position = index.accounts.firstIndex(where: { $0.id == id && $0.tool == tool }) else { return }
-            index.accounts.remove(at: position)
-            if index.inUse[tool] == id { index.inUse[tool] = nil }
+            guard index.accounts.contains(where: { $0.id == id && $0.tool == tool }) else { return }
+            index.journal = AccountSessionJournal(
+                operation: .removeAccount, tool: tool, accountID: id,
+                previousID: index.inUse[tool], previousFingerprint: "", targetFingerprint: "",
+                stagedReference: nil, startedAt: .now
+            )
         }
+        // The deletion intent is durable before any credential or session resource is removed.
+        // settle() retries cleanup after an error or process interruption.
+        try withIndex { index in try settle(&index) }
     }
 
     func markExternalSessionInUse() throws {
@@ -323,6 +363,18 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
     /// changing the index. This works because staging is durable before activation.
     private func settle(_ index: inout AccountSessionIndex) throws {
         guard let journal = index.journal else { return }
+        if journal.operation == .removeAccount {
+            guard journal.tool == tool else {
+                throw AccountSessionError.recoveryRequired("another provider's account deletion must be recovered first")
+            }
+            if let position = index.accounts.firstIndex(where: { $0.id == journal.accountID && $0.tool == tool }) {
+                try removeAccountResource(index.accounts[position], index.inUse[tool] == journal.accountID)
+                index.accounts.remove(at: position)
+                if index.inUse[tool] == journal.accountID { index.inUse[tool] = nil }
+            }
+            index.journal = nil
+            return
+        }
         if journal.operation == .importSession {
             // Imports never touch the live CLI session or its in-use selection. A
             // pending sign-in draft owns retry/cleanup if the process was interrupted.
@@ -362,8 +414,7 @@ final class DurableAccountSessionManager: AccountSessionManaging, @unchecked Sen
 
     private func persist(_ index: AccountSessionIndex) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(index).write(to: indexURL, options: .atomic)
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: indexURL.path)
+        try indexWriter(encoder.encode(index), indexURL, fileManager)
     }
 }
 
