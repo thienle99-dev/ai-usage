@@ -8,6 +8,7 @@ struct CompactPopoverView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @State private var providerContentHeight: CGFloat = 440
 
     private var providers: [Provider] {
         store.providerOrder.filter {
@@ -63,11 +64,24 @@ struct CompactPopoverView: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .background {
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: PopoverContentHeightKey.self,
+                            value: geometry.size.height
+                        )
+                    }
+                }
             }
-            .padding(.top, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(height: min(max(providerContentHeight, 440), 540))
+            .padding(.vertical, 8)
             .scrollContentBackground(.hidden)
             .scrollIndicators(.automatic)
+            .onPreferenceChange(PopoverContentHeightKey.self) { height in
+                providerContentHeight = ceil(height)
+            }
 
             CompactPopoverFooter(
                 lastRefresh: store.lastRefreshAttempt,
@@ -77,7 +91,7 @@ struct CompactPopoverView: View {
             )
         }
         .padding(.horizontal, 15)
-        .frame(width: 280, height: 480, alignment: .topLeading)
+        .frame(width: 280, alignment: .topLeading)
         // A light tint over the system backdrop keeps the native window's
         // blur and shape while lifting its Light Mode tone slightly.
         .background {
@@ -314,6 +328,14 @@ private struct CompactHeaderHoverStyle: ViewModifier {
     }
 }
 
+private struct PopoverContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
+}
+
 private struct CompactProviderSection: View {
     @Environment(UsageStore.self) private var store
     @Environment(AccountLoginCoordinator.self) private var accountLogin
@@ -333,18 +355,20 @@ private struct CompactProviderSection: View {
                 Rectangle()
                     .fill(PopoverColorTokens.separator)
                     .frame(height: 0.5)
-                    .padding(.top, 12)
+                    .padding(.vertical, 8)
             }
             HStack(spacing: 6) {
                 Image(systemName: provider.systemImage)
                     .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 12)
                     .foregroundStyle(PopoverColorTokens.providerIcon(provider, colorScheme: colorScheme))
                     .accessibilityHidden(true)
                 Text(providerLabel)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
             }
-            VStack(spacing: 5) {
+            .padding(.bottom, 2)
+            VStack(spacing: 4) {
                 ForEach(accountRows) { row in
                     CompactAccountRow(
                         row: row,
@@ -560,7 +584,7 @@ private struct CompactAccountRow: View {
                             .help(plan)
                     }
                 }
-                HStack(spacing: 5) {
+                HStack(spacing: 6) {
                     Color.clear.frame(width: 12)
                     Text(usageSummary)
                         .font(.system(size: 12, weight: .regular).monospacedDigit())
@@ -572,7 +596,7 @@ private struct CompactAccountRow: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 if showResetTimes, let resetSummary {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 6) {
                         Color.clear.frame(width: 12)
                         Text(resetSummary)
                             .font(.system(size: 10, weight: .regular).monospacedDigit())
@@ -584,7 +608,7 @@ private struct CompactAccountRow: View {
                 }
             }
             .padding(.horizontal, 4)
-            .padding(.vertical, 7)
+            .padding(.vertical, 6)
             .background(isHovered ? PopoverColorTokens.rowHoverTint(provider, colorScheme: colorScheme) : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
             .overlay {
                 if isHovered && increasedContrast {
