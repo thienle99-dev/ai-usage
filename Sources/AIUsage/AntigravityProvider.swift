@@ -64,8 +64,17 @@ struct AntigravityProvider: UsageProvider {
         guard let http = response as? HTTPURLResponse else { throw ProviderFailure.invalidResponse("Antigravity returned no HTTP response.") }
         guard http.statusCode == 200 else { throw ProviderFailure.http(http.statusCode) }
         let windows = try AntigravityParsing.windows(data)
-        let account = await fetchAccount(accessToken: accessToken) ?? credential.identityLabel
-        return UsageSnapshot(provider: .antigravity, windows: windows, account: account, lastSuccess: .now)
+        async let accountResult = fetchAccount(accessToken: accessToken)
+        async let planResult = fetchPlan(accessToken: accessToken)
+        let account = await accountResult
+            ?? AntigravityCredentials.emailOnlyIdentity(credential.identityLabel)
+        return UsageSnapshot(
+            provider: .antigravity,
+            windows: windows,
+            account: account,
+            plan: await planResult,
+            lastSuccess: .now
+        )
     }
 
     private func fetchAccount(accessToken: String) async -> String? {
@@ -76,10 +85,22 @@ struct AntigravityProvider: UsageProvider {
         guard let (data, response) = try? await loader.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
-        let name = (root["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let email = (root["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let values = [name, email].compactMap { $0 }.filter { !$0.isEmpty }
-        return values.isEmpty ? nil : values.joined(separator: " · ")
+        return email?.isEmpty == false ? email : nil
+    }
+
+    private func fetchPlan(accessToken: String) async -> String? {
+        var request = URLRequest(url: URL(string: "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue("antigravity/1.11.3 macOS/\(ProcessInfo.processInfo.machineArchitecture)", forHTTPHeaderField: "User-Agent")
+        request.httpBody = Data(#"{"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}}"#.utf8)
+        request.timeoutInterval = 8
+        guard let (data, response) = try? await loader.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        return AntigravityParsing.plan(data)
     }
 
     private func refresh(refreshToken: String, preserving identityLabel: String?) async throws -> AntigravityCredentials {
@@ -147,6 +168,14 @@ struct AntigravityCredentials {
             if lhsFresh != rhsFresh { return !lhsFresh && rhsFresh }
             return (lhs.1.expiry ?? .distantPast) < (rhs.1.expiry ?? .distantPast)
         }?.0
+    }
+
+    static func emailOnlyIdentity(_ identity: String?) -> String? {
+        guard let identity else { return nil }
+        return identity.components(separatedBy: " · ")
+            .reversed()
+            .first { $0.contains("@") }?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -324,14 +353,13 @@ extension AntigravityCredentials {
               let token = root["token"] as? [String: Any] else { return nil }
         let expiry = (token["expiry"] as? String).flatMap(parseDate)
         let claims = (token["id_token"] as? String).flatMap(jwtClaims)
-        let name = (claims?["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let email = ((claims?["email"] as? String) ?? (token["email"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let identity = [name, email].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
+        let email = ((claims?["email"] as? String) ?? (token["email"] as? String) ?? (root["id_token_email"] as? String))?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = email.flatMap { $0.isEmpty ? nil : $0 }
         return AntigravityCredentials(
             accessToken: token["access_token"] as? String,
             refreshToken: token["refresh_token"] as? String,
             expiry: expiry,
-            identityLabel: identity.isEmpty ? nil : identity
+            identityLabel: identity
         )
     }
 
@@ -361,6 +389,27 @@ extension AntigravityCredentials {
 }
 
 enum AntigravityParsing {
+    static func plan(_ data: Data) -> String? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let tier = root["paidTier"] as? [String: Any] else { return nil }
+        let id = (tier["id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch id {
+        case "g1-pro-tier": return "Pro"
+        case "g1-ultra-tier": return "Ultra"
+        case "g1-ultra-lite-tier": return "Ultra Lite"
+        case "free-tier": return "Antigravity Starter"
+        default:
+            guard let name = (tier["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !name.isEmpty else {
+                return nil
+            }
+            let prefix = "Google AI "
+            if name.lowercased().hasPrefix(prefix.lowercased()) {
+                return String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return name
+        }
+    }
+
     static func windows(_ data: Data) throws -> [UsageWindow] {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw ProviderFailure.invalidResponse("Antigravity returned malformed quota data.")

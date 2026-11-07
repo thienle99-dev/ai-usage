@@ -162,7 +162,7 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
     }
 
     init(
-        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider(), CopilotProvider(), GeminiProvider(), AntigravityProvider(), GrokProvider(), OpenCodeProvider()],
+        providers: [any UsageProvider] = [ClaudeProvider(), CodexProvider(), CursorProvider(), CopilotProvider(), GeminiProvider(), AntigravityProvider(), GrokProvider(), OpenCodeProvider(), CommandCodeProvider()],
         defaults: UserDefaults = .standard,
         cacheURL: URL? = nil,
         startImmediately: Bool = true,
@@ -259,17 +259,6 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
         ordered = ordered.filter { seen.insert($0).inserted }
         ordered.append(contentsOf: supported.filter { seen.insert($0).inserted })
         return ordered
-    }
-
-    func moveProvider(_ provider: Provider, before target: Provider) {
-        guard provider != target,
-              let sourceIndex = providerOrder.firstIndex(of: provider),
-              let targetIndex = providerOrder.firstIndex(of: target) else { return }
-        var order = providerOrder
-        order.remove(at: sourceIndex)
-        let adjustedTarget = targetIndex > sourceIndex ? targetIndex - 1 : targetIndex
-        order.insert(provider, at: adjustedTarget)
-        providerOrder = order
     }
 
     func refresh(provider requestedProvider: Provider? = nil) async {
@@ -595,8 +584,6 @@ struct LocalManagedAccountQuotaFetcher: ManagedAccountQuotaFetching {
         } catch { codexAccountError = error.localizedDescription }
     }
 
-    func registerCurrentCodexLogin() { performCodexAccountAction { _ = try self.codexAccountManager.registerCurrentAccount(label: nil) } }
-    func stashCodexActiveSession() { performCodexAccountAction { _ = try self.codexAccountManager.stashActiveSession() } }
     func activateCodexAccount(_ id: String) { performCodexAccountAction { try self.codexAccountManager.activateAccount(id) } }
 
     func saveCurrentAccount(for provider: Provider) throws {

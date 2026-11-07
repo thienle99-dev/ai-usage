@@ -59,6 +59,7 @@ enum UsageTheme {
     static let gemini = adaptive(dark: "AB87EA", light: "7952BD")
     static let antigravity = adaptive(dark: "82A9F5", light: "4C73C5")
     static let grok = adaptive(dark: "C0C3CC", light: "525660")
+    static let commandCode = adaptive(dark: "7AA2F7", light: "3B5BDB")
     static let warning = adaptive(dark: "E4AD55", light: "BD8124")
     static let critical = adaptive(dark: "EB6A6A", light: "CD4747")
 
@@ -69,6 +70,7 @@ enum UsageTheme {
         case .gemini: gemini
         case .antigravity: antigravity
         case .grok: grok
+        case .commandCode: commandCode
         default: secondaryText
         }
     }
@@ -144,5 +146,33 @@ enum PopoverColorTokens {
             blue: Double(rgb & 0xff) / 255,
             opacity: 1
         )
+    }
+}
+
+extension View {
+    /// Liquid Glass on macOS 26+, falling back to a thin material on older systems.
+    @ViewBuilder
+    func popoverGlass<S: Shape>(
+        in shape: S,
+        tint: Color? = nil,
+        interactive: Bool = false,
+        isActive: Bool = true
+    ) -> some View {
+        if #available(macOS 26, *) {
+            if isActive {
+                glassEffect(Self.glassStyle(tint: tint, interactive: interactive), in: shape)
+            } else {
+                glassEffect(.identity, in: shape)
+            }
+        } else {
+            background(isActive ? AnyShapeStyle(.thinMaterial) : AnyShapeStyle(.clear), in: shape)
+        }
+    }
+
+    @available(macOS 26, *)
+    private static func glassStyle(tint: Color?, interactive: Bool) -> Glass {
+        var glass = Glass.regular
+        if let tint { glass = glass.tint(tint) }
+        return interactive ? glass.interactive() : glass
     }
 }

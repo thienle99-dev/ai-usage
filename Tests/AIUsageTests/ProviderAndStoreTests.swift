@@ -34,16 +34,26 @@ private final class LockedFlag: @unchecked Sendable {
 
 private actor FixtureHTTPDataLoader: HTTPDataLoading {
     private var fixtures: [HTTPFixture]
+    private let routes: [String: HTTPFixture]
     private var requests: [URLRequest] = []
     private(set) var requestCount = 0
 
-    init(_ fixtures: [HTTPFixture]) { self.fixtures = fixtures }
+    /// `routes` answer by exact URL, for requests that run concurrently and have no stable order.
+    init(_ fixtures: [HTTPFixture], routes: [String: HTTPFixture] = [:]) {
+        self.fixtures = fixtures
+        self.routes = routes
+    }
 
     func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         requestCount += 1
         requests.append(request)
-        guard !fixtures.isEmpty else { throw URLError(.badServerResponse) }
-        let fixture = fixtures.removeFirst()
+        let fixture: HTTPFixture
+        if let routed = request.url.flatMap({ routes[$0.absoluteString] }) {
+            fixture = routed
+        } else {
+            guard !fixtures.isEmpty else { throw URLError(.badServerResponse) }
+            fixture = fixtures.removeFirst()
+        }
         if fixture.shouldFail { throw URLError(.notConnectedToInternet) }
         let response = HTTPURLResponse(
             url: request.url!,
@@ -1055,23 +1065,67 @@ final class ProviderAndStoreTests: XCTestCase {
         XCTAssertEqual(windows.first?.resetsAt, ISO8601DateFormatter().date(from: "2026-10-13T12:30:00Z"))
     }
 
+    func testAntigravityCredentialsDecodeUsesTopLevelIdTokenEmail() throws {
+        let payload = Data(#"{"token":{"access_token":"fake-access","token_type":"Bearer","refresh_token":"fake-refresh","expiry":"2099-10-13T12:30:00Z","expires_in":3600},"auth_method":"oauth","id_token_email":"cli@example.com"}"#.utf8)
+        let credentials = try XCTUnwrap(AntigravityCredentials.decode(payload))
+        XCTAssertEqual(credentials.identityLabel, "cli@example.com")
+    }
+
+    func testAntigravityCredentialsDecodePrefersJWTEmailOverTopLevelIdTokenEmail() throws {
+        let jwtEmail = "jwt-email@example.com"
+        let header = #"{"alg":"none"}"#
+        let payloadJSON = #"{"email":"\#(jwtEmail)"}"#
+        func base64URL(_ value: String) -> String {
+            Data(value.utf8).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        }
+        let jwt = "\(base64URL(header)).\(base64URL(payloadJSON))."
+        let payload = Data(#"{"token":{"access_token":"fake-access","token_type":"Bearer","refresh_token":"fake-refresh","expiry":"2099-10-13T12:30:00Z","expires_in":3600,"id_token":"\#(jwt)"},"auth_method":"oauth","id_token_email":"cli@example.com"}"#.utf8)
+        let credentials = try XCTUnwrap(AntigravityCredentials.decode(payload))
+        XCTAssertEqual(credentials.identityLabel, jwtEmail)
+    }
+
+    func testAntigravityCredentialsDecodeIdentityStableAcrossAccessTokenChanges() throws {
+        let firstPayload = Data(#"{"token":{"access_token":"fake-access-one","token_type":"Bearer","refresh_token":"fake-refresh","expiry":"2099-10-13T12:30:00Z","expires_in":3600},"auth_method":"oauth","id_token_email":"cli@example.com"}"#.utf8)
+        let secondPayload = Data(#"{"token":{"access_token":"fake-access-two","token_type":"Bearer","refresh_token":"fake-refresh","expiry":"2099-10-13T12:30:00Z","expires_in":3600},"auth_method":"oauth","id_token_email":"cli@example.com"}"#.utf8)
+        let first = try XCTUnwrap(AntigravityCredentials.decode(firstPayload))
+        let second = try XCTUnwrap(AntigravityCredentials.decode(secondPayload))
+        XCTAssertEqual(first.identityLabel, second.identityLabel)
+        XCTAssertEqual(first.identityLabel, "cli@example.com")
+    }
+
+    /// A home with no ~/.gemini token file, so tests never read the developer's real Antigravity session.
+    private static func emptyHome() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("agy-home-\(UUID().uuidString)")
+    }
+
     func testAntigravityProviderUsesExistingCredentialAndQuotaEndpoint() async throws {
         let credential = Data(#"{"token":{"access_token":"fixture-antigravity-token","expiry":"2099-10-13T12:30:00Z"}}"#.utf8)
-        let loader = FixtureHTTPDataLoader([
-            HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8)),
-            HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8))
-        ])
-        let provider = AntigravityProvider(loader: loader, credentialReader: { credential })
+        let userInfoURL = "https://openidconnect.googleapis.com/v1/userinfo"
+        let planURL = "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"
+        let loader = FixtureHTTPDataLoader(
+            [HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8))],
+            routes: [
+                userInfoURL: HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8)),
+                planURL: HTTPFixture(status: 200, body: Data(#"{"paidTier":{"id":"g1-pro-tier"}}"#.utf8))
+            ]
+        )
+        let provider = AntigravityProvider(loader: loader, homeDirectory: Self.emptyHome(), credentialReader: { credential }, managedCredentialProvider: { nil })
         let snapshot = try await provider.fetch()
         XCTAssertEqual(snapshot.provider, .antigravity)
         XCTAssertEqual(snapshot.windows.first?.label, "Gemini Weekly")
         XCTAssertEqual(snapshot.windows.first?.validUtilization, 80)
-        XCTAssertEqual(snapshot.account, "Antigravity User · agy@example.com")
+        XCTAssertEqual(snapshot.account, "agy@example.com")
+        XCTAssertEqual(snapshot.plan, "Pro")
         let requests = await loader.capturedRequests()
-        XCTAssertEqual(requests.map(\.url?.absoluteString), [
-            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
-            "https://openidconnect.googleapis.com/v1/userinfo"
-        ])
+        XCTAssertEqual(
+            requests.first?.url?.absoluteString,
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+        )
+        // Account and plan lookups run concurrently, so only their set is stable.
+        XCTAssertEqual(Set(requests.dropFirst().compactMap { $0.url?.absoluteString }), [userInfoURL, planURL])
         XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-antigravity-token")
         XCTAssertEqual(String(data: requests.first?.httpBody ?? Data(), encoding: .utf8), "{}")
     }
@@ -1116,18 +1170,25 @@ final class ProviderAndStoreTests: XCTestCase {
 
     func testAntigravityRefreshUsesResolvedClient() async throws {
         let expired = Data(#"{"token":{"access_token":"old-token","refresh_token":"fixture-refresh","expiry":"2020-10-13T12:30:00Z"}}"#.utf8)
-        let loader = FixtureHTTPDataLoader([
-            HTTPFixture(status: 200, body: Data(#"{"access_token":"new-token","expires_in":3600}"#.utf8)),
-            HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8)),
-            HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8))
-        ])
+        let loader = FixtureHTTPDataLoader(
+            [
+                HTTPFixture(status: 200, body: Data(#"{"access_token":"new-token","expires_in":3600}"#.utf8)),
+                HTTPFixture(status: 200, body: Data(#"{"groups":[{"displayName":"Gemini models","buckets":[{"bucketId":"weekly","remainingFraction":0.2}]}]}"#.utf8))
+            ],
+            routes: [
+                "https://openidconnect.googleapis.com/v1/userinfo":
+                    HTTPFixture(status: 200, body: Data(#"{"name":"Antigravity User","email":"agy@example.com"}"#.utf8))
+            ]
+        )
         let provider = AntigravityProvider(
             loader: loader,
+            homeDirectory: Self.emptyHome(),
             credentialReader: { expired },
+            managedCredentialProvider: { nil },
             clientProvider: { AntigravityOAuthClient(id: "injected-id", secret: "injected-secret") }
         )
         let snapshot = try await provider.fetch()
-        XCTAssertEqual(snapshot.account, "Antigravity User · agy@example.com")
+        XCTAssertEqual(snapshot.account, "agy@example.com")
         let requests = await loader.capturedRequests()
         XCTAssertEqual(requests.first?.url?.absoluteString, "https://oauth2.googleapis.com/token")
         let body = String(data: requests.first?.httpBody ?? Data(), encoding: .utf8) ?? ""
@@ -1139,7 +1200,13 @@ final class ProviderAndStoreTests: XCTestCase {
     func testAntigravityRefreshFailsClearlyWithoutClient() async {
         let expired = Data(#"{"token":{"access_token":"old-token","refresh_token":"fixture-refresh","expiry":"2020-10-13T12:30:00Z"}}"#.utf8)
         let loader = FixtureHTTPDataLoader([])
-        let provider = AntigravityProvider(loader: loader, credentialReader: { expired }, clientProvider: { nil })
+        let provider = AntigravityProvider(
+            loader: loader,
+            homeDirectory: Self.emptyHome(),
+            credentialReader: { expired },
+            managedCredentialProvider: { nil },
+            clientProvider: { nil }
+        )
         do {
             _ = try await provider.fetch()
             XCTFail("Expected credentials failure")
@@ -1212,15 +1279,6 @@ final class ProviderAndStoreTests: XCTestCase {
         ])
         XCTAssertEqual(requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fixture-access-token")
         XCTAssertEqual(String(data: requests.last?.httpBody ?? Data(), encoding: .utf8), #"{"project":"gen-lang-client-test"}"#)
-    }
-
-    func testUsageCardLayoutDefaultsAndUnknownPreferenceFallback() throws {
-        XCTAssertEqual(UsageCardLayout.preference("twoColumns", fallback: .compactBalanced), .twoColumns)
-        XCTAssertEqual(UsageCardLayout.preference("obsolete-layout", fallback: .twoColumns), .twoColumns)
-        XCTAssertEqual(UsageCardLayout.allCases, [.compactBalanced, .twoColumns, .minimalRows, .collapsible])
-
-        let encoded = try JSONEncoder().encode(UsageCardLayout.collapsible)
-        XCTAssertEqual(try JSONDecoder().decode(UsageCardLayout.self, from: encoded), .collapsible)
     }
 
     func testClaudeCodeDefaultLiveServiceMatchesPrimaryReadService() {
@@ -1487,7 +1545,7 @@ final class ProviderAndStoreTests: XCTestCase {
         let defaults = isolatedDefaults()
         let first = UsageStore(providers: [], defaults: defaults, startImmediately: false)
         first.appearance = "dark"
-        first.menuBarMode = .providerSpecific
+        first.menuBarMode = .combinedUsage
         first.selectedProvider = .copilot
         first.warningThreshold = 75
         first.criticalThreshold = 95
@@ -1495,18 +1553,145 @@ final class ProviderAndStoreTests: XCTestCase {
 
         let second = UsageStore(providers: [], defaults: defaults, startImmediately: false)
         XCTAssertEqual(second.appearance, "dark")
-        XCTAssertEqual(second.menuBarMode, .providerSpecific)
+        XCTAssertEqual(second.menuBarMode, .combinedUsage)
         XCTAssertEqual(second.selectedProvider, .copilot)
         XCTAssertEqual(second.warningThreshold, 75)
         XCTAssertEqual(second.criticalThreshold, 95)
         XCTAssertEqual(second.visibleProviders, [.claude])
     }
 
+    @MainActor
+    func testRemovedMenuBarModeFallsBackToCombinedUsage() {
+        let defaults = isolatedDefaults()
+        defaults.set("providerSpecific", forKey: "menuBarMode")
+        let store = UsageStore(providers: [], defaults: defaults, startImmediately: false)
+        XCTAssertEqual(store.menuBarMode, .combinedUsage)
+    }
+
+    func testCommandCodeProviderNormalCase() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".commandcode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"apiKey":"fixture-api-key","userName":"alice"}"#.utf8).write(to: config.appendingPathComponent("auth.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"user":{"id":"u1","name":"Alice","email":"me@example.com","userName":"alice"},"org":{"id":"org1","login":"acme"}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"credits":{"belowThreshold":false,"creditThreshold":0,"monthlyCredits":5.195,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"exceeded":null,"fiveHour":{"used":0,"cap":3,"exceeded":false,"resetAt":0},"weekly":{"used":0,"cap":6,"exceeded":false,"resetAt":0}},"sandboxAccess":false,"sandboxMinutes":null}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"data":{"status":"active","planId":"individual-go-v1","currentPeriodStart":"2026-10-01T00:00:00Z","currentPeriodEnd":"2026-11-01T00:00:00Z","cancelAtPeriodEnd":false}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"totalCount":5850,"totalCost":5.88}"#.utf8))
+        ])
+        let snapshot = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.provider, .commandCode)
+        XCTAssertEqual(snapshot.account, "me@example.com · Go")
+        XCTAssertEqual(snapshot.windows.map(\.label), ["Credits", "5-hour", "Weekly limit"])
+        XCTAssertEqual(snapshot.windows[0].validUtilization ?? -1, 48.05, accuracy: 0.001)
+        XCTAssertEqual(snapshot.windows[0].detail, "5,850 requests this month")
+        XCTAssertEqual(snapshot.windows[0].resetsAt, ISO8601DateFormatter().date(from: "2026-11-01T00:00:00Z"))
+        XCTAssertEqual(snapshot.windows[1].validUtilization, 0)
+        XCTAssertEqual(snapshot.windows[2].validUtilization, 0)
+
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.count, 4)
+    }
+
+    func testCommandCodeProviderSummaryFailureStillReturnsSnapshot() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".commandcode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"apiKey":"fixture-api-key"}"#.utf8).write(to: config.appendingPathComponent("auth.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"user":{"id":"u1","name":"Alice","email":"me@example.com","userName":"alice"},"org":{"id":"org1","login":"acme"}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"credits":{"belowThreshold":false,"creditThreshold":0,"monthlyCredits":5.195,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"exceeded":null,"fiveHour":{"used":0,"cap":3,"exceeded":false,"resetAt":0},"weekly":{"used":0,"cap":6,"exceeded":false,"resetAt":0}},"sandboxAccess":false,"sandboxMinutes":null}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"data":{"status":"active","planId":"individual-go-v1","currentPeriodStart":"2026-10-01T00:00:00Z","currentPeriodEnd":"2026-11-01T00:00:00Z","cancelAtPeriodEnd":false}}"#.utf8)),
+            HTTPFixture(status: 404, body: Data(#"{"error":"not found"}"#.utf8))
+        ])
+        let snapshot = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.provider, .commandCode)
+        XCTAssertEqual(snapshot.windows.map(\.label), ["Credits", "5-hour", "Weekly limit"])
+        XCTAssertNil(snapshot.windows.first?.detail)
+
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.count, 4)
+    }
+
+    func testCommandCodeProviderAccountFallsBackToPlanWithoutUser() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".commandcode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"apiKey":"fixture-api-key"}"#.utf8).write(to: config.appendingPathComponent("auth.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"org":{"id":"org1","login":"acme"}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"credits":{"belowThreshold":false,"creditThreshold":0,"monthlyCredits":5.195,"purchasedCredits":0,"freeCredits":0},"windowLimits":{"limited":true,"exceeded":null,"fiveHour":{"used":0,"cap":3,"exceeded":false,"resetAt":0},"weekly":{"used":0,"cap":6,"exceeded":false,"resetAt":0}},"sandboxAccess":false,"sandboxMinutes":null}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"data":{"status":"active","planId":"individual-go-v1","currentPeriodStart":"2026-10-01T00:00:00Z","currentPeriodEnd":"2026-11-01T00:00:00Z","cancelAtPeriodEnd":false}}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"totalCount":5850,"totalCost":5.88}"#.utf8))
+        ])
+        let snapshot = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.provider, .commandCode)
+        XCTAssertEqual(snapshot.account, "Go")
+
+        let requests = await loader.capturedRequests()
+        XCTAssertEqual(requests.count, 4)
+    }
+
+    func testCommandCodeProviderFallsBackToCreditPool() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".commandcode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"apiKey":"fixture-api-key"}"#.utf8).write(to: config.appendingPathComponent("auth.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"user":{"id":"u1","name":"Alice","email":"alice@example.com","userName":"alice"},"org":null}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"credits":{"belowThreshold":false,"creditThreshold":0,"monthlyCredits":5.19,"purchasedCredits":0,"freeCredits":0},"windowLimits":null,"sandboxAccess":false,"sandboxMinutes":null}"#.utf8)),
+            HTTPFixture(status: 200, body: Data(#"{"success":true,"data":{"status":"active","planId":"individual-go-v1","currentPeriodStart":"2026-10-01T00:00:00Z","currentPeriodEnd":"2026-11-01T00:00:00Z","cancelAtPeriodEnd":false}}"#.utf8))
+        ])
+        let snapshot = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+        XCTAssertEqual(snapshot.windows.count, 1)
+        XCTAssertGreaterThan(snapshot.windows.first?.validUtilization ?? -1, 0)
+    }
+
+    func testCommandCodeProviderRequiresAuthenticationWithoutAuthFile() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        let loader = FixtureHTTPDataLoader([])
+        do {
+            _ = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+            XCTFail("Expected authentication failure")
+        } catch let error as ProviderFailure {
+            XCTAssertEqual(error.status, .authenticationRequired)
+        }
+    }
+
+    func testCommandCodeProviderMaps401ToAuthenticationRequired() async throws {
+        let home = FileManager.default.temporaryDirectory.appendingPathComponent("commandcode-provider-\(UUID().uuidString)")
+        let config = home.appendingPathComponent(".commandcode", isDirectory: true)
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+        try Data(#"{"apiKey":"fixture-api-key"}"#.utf8).write(to: config.appendingPathComponent("auth.json"))
+
+        let loader = FixtureHTTPDataLoader([
+            HTTPFixture(status: 401, body: Data(#"{"success":false}"#.utf8))
+        ])
+        do {
+            _ = try await CommandCodeProvider(loader: loader, homeDirectory: home).fetch()
+            XCTFail("Expected authentication failure")
+        } catch let error as ProviderFailure {
+            XCTAssertEqual(error.status, .authenticationRequired)
+        }
+    }
+
     func testProviderNavigationRegistryLabelsAndSupportedSources() {
         XCTAssertEqual(Provider.allCases.map(\.shortName), [
-            "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Antigravity", "Grok", "Windsurf", "Cline", "Roo", "OpenCode"
+            "Codex", "Claude", "Cursor", "Copilot", "Gemini", "Antigravity", "Grok", "OpenCode", "Command Code"
         ])
-        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode])
+        XCTAssertEqual(Provider.supported, [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode, .commandCode])
         XCTAssertEqual(Provider.codex.menuBarAbbreviation, "C")
         XCTAssertEqual(Provider.claude.menuBarAbbreviation, "A")
     }
@@ -1543,24 +1728,8 @@ final class ProviderAndStoreTests: XCTestCase {
             ""
         )
         XCTAssertEqual(
-            MenuBarContent.text(mode: .providerSpecific, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
-            "C 80% · A 42%"
-        )
-        XCTAssertEqual(
-            MenuBarContent.text(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
-            ""
-        )
-        XCTAssertEqual(
-            MenuBarContent.text(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 70),
-            "C"
-        )
-        XCTAssertEqual(
             MenuBarContent.symbolName(mode: .singleProvider, selectedProvider: .codex, snapshots: snapshots, enabled: both, criticalThreshold: 90),
             "terminal.fill"
-        )
-        XCTAssertEqual(
-            MenuBarContent.symbolName(mode: .criticalProviderOnly, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 70),
-            "exclamationmark.triangle.fill"
         )
         XCTAssertEqual(
             MenuBarContent.symbolName(mode: .combinedUsage, selectedProvider: .claude, snapshots: snapshots, enabled: both, criticalThreshold: 90),
@@ -1705,29 +1874,6 @@ extension ProviderAndStoreTests {
         _ = UsageStore(providers: [], defaults: defaults, startImmediately: false, codexAccountManager: manager)
         XCTAssertEqual(try manager.currentIndex().accounts.count, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: legacyHome.appendingPathComponent("marker.txt").path))
-    }
-
-    @MainActor
-    func testCodexWiringRegisterStashAndActivateUpdatePublishedAccounts() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let identity = LockedAccountFixture(reference: "live", fingerprint: "account-a")
-        let manager = DurableAccountSessionManager(tool: .codex, indexURL: root.appendingPathComponent("index.json"), identify: { identity.read() }, stage: { _, id in "staged-\(id)" }, activate: { _ in identity.set(reference: "live", fingerprint: "account-a") })
-        let store = UsageStore(providers: [], defaults: isolatedDefaults(), startImmediately: false, codexAccountManager: manager)
-        store.registerCurrentCodexLogin()
-        XCTAssertEqual(store.codexAccounts.count, 1)
-        let accountA = try XCTUnwrap(store.codexAccounts.first)
-        XCTAssertEqual(store.codexInUseAccountID, accountA.id)
-        store.stashCodexActiveSession()
-        XCTAssertEqual(store.codexAccounts.count, 1)
-        identity.set(reference: "live-b", fingerprint: "account-b")
-        store.registerCurrentCodexLogin()
-        XCTAssertEqual(store.codexAccounts.count, 2)
-        let accountB = try XCTUnwrap(store.codexAccounts.first { $0.identityFingerprint == "account-b" })
-        XCTAssertEqual(store.codexInUseAccountID, accountB.id)
-        store.activateCodexAccount(accountA.id)
-        XCTAssertEqual(store.codexInUseAccountID, accountA.id)
-        XCTAssertNil(store.codexAccountError)
     }
 
     @MainActor

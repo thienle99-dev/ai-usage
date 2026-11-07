@@ -1,31 +1,5 @@
 import Foundation
 
-enum UsageCardLayout: String, Codable, CaseIterable, Identifiable, Sendable {
-    case compactBalanced
-    case twoColumns
-    case minimalRows
-    case collapsible
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .compactBalanced: "Compact Balanced"
-        case .twoColumns: "Two Columns"
-        case .minimalRows: "Minimal Rows"
-        case .collapsible: "Collapsible"
-        }
-    }
-    var subtitle: String {
-        switch self {
-        case .compactBalanced: "Full-width progress bars"
-        case .twoColumns: "Side-by-side usage metrics"
-        case .minimalRows: "Maximum information density"
-        case .collapsible: "Expand details on demand"
-        }
-    }
-    static func preference(_ rawValue: String, fallback: Self) -> Self { Self(rawValue: rawValue) ?? fallback }
-}
-
 enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case codex = "Codex"
     case claude = "Claude"
@@ -34,10 +8,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
     case gemini = "Gemini"
     case antigravity = "Antigravity"
     case grok = "Grok"
-    case windsurf = "Windsurf"
-    case cline = "Cline"
-    case roo = "Roo"
     case openCode = "OpenCode"
+    case commandCode = "CommandCode"
 
     var id: String { rawValue }
     var displayName: String {
@@ -49,10 +21,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .gemini: "Gemini CLI"
         case .antigravity: "Google Antigravity"
         case .grok: "Grok CLI"
-        case .windsurf: "Windsurf"
-        case .cline: "Cline"
-        case .roo: "Roo Code"
         case .openCode: "OpenCode"
+        case .commandCode: "Command Code"
         }
     }
     var shortName: String {
@@ -64,10 +34,8 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .gemini: "Gemini"
         case .antigravity: "Antigravity"
         case .grok: "Grok"
-        case .windsurf: "Windsurf"
-        case .cline: "Cline"
-        case .roo: "Roo"
         case .openCode: "OpenCode"
+        case .commandCode: "Command Code"
         }
     }
     var menuBarAbbreviation: String {
@@ -86,14 +54,11 @@ enum Provider: String, Codable, CaseIterable, Identifiable, Sendable {
         case .gemini: "diamond.fill"
         case .antigravity: "sparkles.rectangle.stack"
         case .grok: "bolt.fill"
-        case .windsurf: "wind"
-        case .cline: "wrench.and.screwdriver.fill"
-        case .roo: "point.3.connected.trianglepath.dotted"
         case .openCode: "chevron.left.forwardslash.chevron.right"
+        case .commandCode: "terminal.fill"
         }
     }
-    var isUsageSupported: Bool { [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode].contains(self) }
-    static let supported: [Provider] = [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode]
+    static let supported: [Provider] = [.codex, .claude, .cursor, .copilot, .gemini, .antigravity, .grok, .openCode, .commandCode]
 }
 
 enum ProviderStatus: String, Codable, Sendable {
@@ -155,11 +120,7 @@ enum RefreshPolicy: String, CaseIterable, Identifiable, Codable, Sendable {
 enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
     case iconOnly
     case combinedUsage
-    case providerSpecific
-    case criticalProviderOnly
     case singleProvider
-    case currentProvider
-    case highestUsageProvider
     case frontmostAppProvider
 
     var id: String { rawValue }
@@ -167,16 +128,10 @@ enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Codable, Sendable {
         switch self {
         case .iconOnly: "Icon only"
         case .combinedUsage: "Combined usage"
-        case .providerSpecific: "Provider-specific"
-        case .criticalProviderOnly: "Critical provider only"
         case .singleProvider: "Single provider"
-        case .currentProvider: "Current provider"
-        case .highestUsageProvider: "Highest usage provider"
         case .frontmostAppProvider: "Active app"
         }
     }
-
-    static let quickSwitchSources: [Self] = [.currentProvider, .highestUsageProvider, .frontmostAppProvider]
 
     init(legacyValue: String) {
         switch legacyValue {
@@ -205,6 +160,7 @@ struct UsageSnapshot: Codable, Identifiable, Sendable {
     let provider: Provider
     var windows: [UsageWindow]
     var account: String?
+    var plan: String? = nil
     /// Stable account identity (email preferred, else provider account id).
     /// Used to detect external account swaps (e.g. a different folder moved
     /// into `~/.codex`). Missing keys in old caches decode as nil.
@@ -265,15 +221,11 @@ enum MenuBarContent {
         enabled: Set<Provider>
     ) -> Provider? {
         switch mode {
-        case .currentProvider:
-            return usable(currentProvider, enabled: enabled) ?? highestUsageProvider(in: snapshots, enabled: enabled)
-        case .highestUsageProvider:
-            return highestUsageProvider(in: snapshots, enabled: enabled)
         case .frontmostAppProvider:
             return usable(frontmostAppProvider, enabled: enabled)
                 ?? usable(currentProvider, enabled: enabled)
                 ?? highestUsageProvider(in: snapshots, enabled: enabled)
-        default:
+        case .iconOnly, .combinedUsage, .singleProvider:
             return nil
         }
     }
@@ -292,14 +244,6 @@ enum MenuBarContent {
             return ""
         case .combinedUsage:
             return UsageAggregation.maximum(in: snapshots, enabled: enabled).map { "\(Int($0.rounded()))%" } ?? ""
-        case .providerSpecific:
-            return Provider.allCases.compactMap { provider in
-                UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled)
-                    .map { "\(provider.menuBarAbbreviation) \(Int($0.rounded()))%" }
-            }.joined(separator: " · ")
-        case .criticalProviderOnly:
-            return criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold)
-                .map(\.menuBarAbbreviation).joined(separator: " · ")
         case .singleProvider:
             if !enabled.contains(selectedProvider) {
                 // The chosen provider is hidden: fall back like combined usage.
@@ -309,7 +253,7 @@ enum MenuBarContent {
             } else {
                 return selectedProvider.menuBarAbbreviation
             }
-        case .currentProvider, .highestUsageProvider, .frontmostAppProvider:
+        case .frontmostAppProvider:
             guard let provider = sourceProvider(
                 mode: mode,
                 currentProvider: currentProvider,
@@ -337,7 +281,7 @@ enum MenuBarContent {
         switch mode {
         case .singleProvider:
             selectedProvider.systemImage
-        case .currentProvider, .highestUsageProvider, .frontmostAppProvider:
+        case .frontmostAppProvider:
             sourceProvider(
                 mode: mode,
                 currentProvider: currentProvider,
@@ -345,23 +289,8 @@ enum MenuBarContent {
                 snapshots: snapshots,
                 enabled: enabled
             )?.systemImage ?? "sparkles"
-        case .criticalProviderOnly
-            where !criticalProviders(in: snapshots, enabled: enabled, threshold: criticalThreshold).isEmpty:
-            "exclamationmark.triangle.fill"
         default:
             "sparkles"
-        }
-    }
-
-    private static func criticalProviders(
-        in snapshots: [Provider: UsageSnapshot],
-        enabled: Set<Provider>,
-        threshold: Double
-    ) -> [Provider] {
-        Provider.allCases.compactMap { provider in
-            guard let usage = UsageAggregation.maximum(for: provider, in: snapshots, enabled: enabled),
-                  usage >= threshold else { return nil }
-            return provider
         }
     }
 
@@ -514,23 +443,50 @@ enum UsageParsing {
         return formatter.string(from: NSNumber(value: amount)) ?? String(format: "$%.2f", amount)
     }
 
-    static func claudeAccount(_ data: Data) -> String? {
+    static func claudeAccount(_ data: Data, subscriptionType: String? = nil) -> String? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
         let account = root["account"] as? [String: Any]
         let organization = root["organization"] as? [String: Any]
         let email = (account?["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayName = (account?["display_name"] as? String) ?? (account?["full_name"] as? String)
-        let plan = (organization?["rate_limit_tier"] as? String) ?? (account?["subscription_type"] as? String)
+        let subscription = [
+            subscriptionType, root["subscriptionType"], account?["subscriptionType"], organization?["subscriptionType"],
+            root["subscription_type"], account?["subscription_type"], organization?["subscription_type"]
+        ]
+        .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
+        let rateLimitTier = [
+            root["rateLimitTier"], account?["rateLimitTier"], organization?["rate_limit_tier"],
+            account?["organizationRateLimitTier"], organization?["organizationRateLimitTier"]
+        ]
+        .compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
+        let plan = claudePlan(subscriptionType: subscription, rateLimitTier: rateLimitTier)
         let identity = [email, displayName].compactMap { $0 }.first(where: { !$0.isEmpty })
         guard let identity else { return nil }
         guard let plan, !plan.isEmpty else { return identity }
-        return "\(identity) · \(friendlyPlan(plan))"
+        return "\(identity) · \(plan)"
     }
 
-    private static func friendlyPlan(_ value: String) -> String {
+    static func claudePlan(subscriptionType: String?, rateLimitTier: String?) -> String? {
+        let subscription = subscriptionType?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let tier = rateLimitTier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let subscription, !subscription.isEmpty else {
+            return tier.flatMap { $0.isEmpty ? nil : friendlyPlan($0) }
+        }
+        if subscription.lowercased().contains("max"),
+           let tier, tier.lowercased().contains("max") {
+            return friendlyPlan(tier)
+        }
+        return friendlyPlan(subscription)
+    }
+
+    static func friendlyPlan(_ value: String) -> String {
         let normalized = value.lowercased()
-        if normalized.contains("max_20x") { return "Max 20x" }
-        if normalized.contains("max_5x") { return "Max 5x" }
+        if normalized == "default_claude_ai" { return "Pro" }
+        if let range = normalized.range(of: #"max_(\d+x)"#, options: .regularExpression) {
+            return "Max \(normalized[range].replacingOccurrences(of: "max_", with: ""))"
+        }
         if normalized.contains("max") { return "Max" }
         if normalized.contains("pro") { return "Pro" }
         if normalized.contains("team") { return "Team" }

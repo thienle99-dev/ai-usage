@@ -18,10 +18,11 @@ let sessionTimer
 let quotaTimer
 let activeResponseModes = []
 
-const providerOrder = ['Claude', 'Codex', 'Copilot', 'Cursor', 'Gemini', 'Antigravity', 'Grok', 'OpenCode']
+const providerOrder = ['Claude', 'Codex', 'Copilot', 'Cursor', 'Gemini', 'Antigravity', 'Grok', 'OpenCode', 'CommandCode']
 const providerNames = {
   Claude: 'Claude', Codex: 'Codex', Copilot: 'Copilot', Cursor: 'Cursor',
   Gemini: 'Gemini', Antigravity: 'Antigravity', Grok: 'Grok', OpenCode: 'OpenCode',
+  CommandCode: 'Command Code',
 }
 
 function redraw($) {

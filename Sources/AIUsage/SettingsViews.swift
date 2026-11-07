@@ -349,16 +349,14 @@ struct GeneralSettingsView: View {
 
     private var menuBarDescription: String {
         switch store.wrappedValue.menuBarMode {
-        case .currentProvider:
-            "Follows the provider selected in the dashboard; Overview falls back to the highest usage."
-        case .highestUsageProvider:
-            "Shows the enabled provider with the highest valid usage percentage."
+        case .iconOnly:
+            "Shows only the app icon."
+        case .combinedUsage:
+            "Combined usage uses the highest valid percentage across enabled usage windows."
         case .frontmostAppProvider:
             "Follows a recognized foreground app; unknown apps fall back to the selected provider, then highest usage."
         case .singleProvider:
             "Shows the selected provider's highest window. Falls back to combined usage while it is hidden."
-        default:
-            "Combined usage uses the highest valid percentage across enabled usage windows."
         }
     }
 
@@ -1053,7 +1051,6 @@ private struct RTKAgentSettingsRow: View {
 }
 
 private struct ProviderConfigButton: View {
-    @Environment(UsageStore.self) private var store
     let provider: Provider
     @State private var message: String?
 
@@ -1134,166 +1131,7 @@ struct AppearanceSettingsView: View {
                     .accessibilityLabel("Dashboard theme")
                 }
             }
-            UsageCardLayoutSettings()
         }
-    }
-}
-
-private struct UsageCardLayoutSettings: View {
-    @AppStorage("overviewCardLayout") private var overviewRaw = UsageCardLayout.twoColumns.rawValue
-    @AppStorage("detailCardLayout") private var detailRaw = UsageCardLayout.compactBalanced.rawValue
-    @AppStorage("useUnifiedCardLayout") private var useUnifiedLayout = false
-    @AppStorage("collapsibleInitiallyExpanded") private var initiallyExpanded = false
-
-    private var overviewSelection: Binding<UsageCardLayout> {
-        Binding(get: { UsageCardLayout.preference(overviewRaw, fallback: .twoColumns) }, set: { overviewRaw = $0.rawValue })
-    }
-    private var detailSelection: Binding<UsageCardLayout> {
-        Binding(get: { UsageCardLayout.preference(detailRaw, fallback: .compactBalanced) }, set: { detailRaw = $0.rawValue })
-    }
-
-    var body: some View {
-        SettingsSection(title: "Usage Card Layout") {
-            Text("Overview Layout")
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(UsageTheme.primaryText)
-            layoutGrid(selection: overviewSelection)
-            SettingsRowDivider()
-            Text("Provider Detail Layout")
-                .font(.system(size: 12, weight: .semibold)).foregroundStyle(UsageTheme.primaryText)
-            layoutGrid(selection: detailSelection).disabled(useUnifiedLayout)
-            if useUnifiedLayout {
-                Text("Overview Layout is used for both Overview and Provider Detail.")
-                    .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
-            }
-            SettingsRowDivider()
-            SettingsToggleRow(
-                title: "Use the same layout everywhere",
-                isOn: $useUnifiedLayout
-            )
-            SettingsRowDivider()
-            SettingsToggleRow(
-                title: "Start collapsible cards expanded",
-                description: "Applies when a collapsible layout is selected.",
-                isOn: $initiallyExpanded
-            )
-            .disabled(overviewSelection.wrappedValue != .collapsible && detailSelection.wrappedValue != .collapsible)
-        }
-    }
-
-    private func layoutGrid(selection: Binding<UsageCardLayout>) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible(), spacing: 9), GridItem(.flexible(), spacing: 9)], spacing: 9) {
-            ForEach(UsageCardLayout.allCases) { layout in
-                UsageCardLayoutChoice(layout: layout, isSelected: selection.wrappedValue == layout) {
-                    selection.wrappedValue = layout
-                }
-            }
-        }
-        .padding(.vertical, 4)
-    }
-}
-
-private struct UsageCardLayoutChoice: View {
-    let layout: UsageCardLayout
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 7) {
-                UsageCardLayoutPreview(layout: layout)
-                    .frame(height: 48)
-                    .frame(maxWidth: .infinity)
-                    .background(UsageTheme.background, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                HStack(spacing: 5) {
-                    Text(layout.title).font(.system(size: 11, weight: .semibold)).lineLimit(1)
-                    Spacer(minLength: 0)
-                    if isSelected { Image(systemName: "checkmark.circle.fill").font(.system(size: 12)).foregroundStyle(UsageTheme.codex) }
-                }
-                Text(layout.subtitle).font(.system(size: 9.5)).foregroundStyle(UsageTheme.secondaryText).lineLimit(1)
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? UsageTheme.codex.opacity(0.08) : UsageTheme.elevated.opacity(0.45), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(isSelected ? UsageTheme.codex.opacity(0.55) : UsageTheme.separator, lineWidth: isSelected ? 1 : 0.7))
-            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(layout.title), \(layout.subtitle)")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private struct UsageCardLayoutPreview: View {
-    let layout: UsageCardLayout
-    private let accent = UsageTheme.codex
-
-    var body: some View {
-        VStack(spacing: 4) {
-            switch layout {
-            case .compactBalanced:
-                previewMetric(label: "5-hour limit", width: 0.38, horizontal: false)
-                previewMetric(label: "Weekly limit", width: 0.2, horizontal: false)
-            case .twoColumns:
-                HStack(spacing: 5) {
-                    tileMetric(label: "5-hour", width: 0.38)
-                    tileMetric(label: "Weekly", width: 0.2)
-                }
-            case .minimalRows:
-                previewMetric(label: "5h", width: 0.38, horizontal: true)
-                previewMetric(label: "7d", width: 0.2, horizontal: true)
-            case .collapsible:
-                HStack(spacing: 4) {
-                    Circle().fill(accent).frame(width: 5, height: 5)
-                    Text("Codex · Plus").font(.system(size: 8, weight: .medium))
-                    Spacer()
-                    Text("10%").font(.system(size: 8, weight: .semibold).monospacedDigit())
-                    Image(systemName: "chevron.down").font(.system(size: 7, weight: .semibold))
-                }
-                previewBar(width: 0.38)
-            }
-        }
-        .padding(.horizontal, 7)
-        .accessibilityHidden(true)
-    }
-
-    @ViewBuilder private func previewMetric(label: String, width: CGFloat, horizontal: Bool) -> some View {
-        if horizontal {
-            HStack(spacing: 4) {
-                Text(label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
-                previewBar(width: width)
-                Spacer(minLength: 2)
-                Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7.5, weight: .semibold).monospacedDigit())
-            }
-        } else {
-            VStack(spacing: 2) {
-                HStack(spacing: 4) {
-                    Text(label).font(.system(size: 7.5, weight: .medium)).lineLimit(1)
-                    Spacer(minLength: 2)
-                    Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7.5, weight: .semibold).monospacedDigit())
-                }
-                previewBar(width: width)
-            }
-        }
-    }
-
-    private func tileMetric(label: String, width: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack { Text(label).font(.system(size: 7.5, weight: .medium)); Spacer(); Text(width == 0.38 ? "10%" : "2%").font(.system(size: 7, weight: .semibold)) }
-            previewBar(width: width)
-        }
-        .padding(4)
-        .frame(maxWidth: .infinity)
-        .background(UsageTheme.elevated, in: RoundedRectangle(cornerRadius: 5))
-    }
-
-    private func previewBar(width: CGFloat) -> some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                Capsule().fill(UsageTheme.track)
-                Capsule().fill(accent).frame(width: proxy.size.width * width)
-            }
-        }
-        .frame(height: 4)
     }
 }
 
@@ -1311,7 +1149,6 @@ private struct ProviderAndAccountSettingsPage: View {
     let page: SettingsCategory
     @Environment(UsageStore.self) private var store
     @Environment(\.openWindow) private var openWindow
-    @State private var expandedProviders = Set(Provider.supported.map(\.rawValue))
     @State private var cursorCookieHeader = ""
     @State private var cursorCredentialMessage: String?
     @State private var cursorHasStoredCookie = CursorCredentialVault.hasStoredCookie
@@ -1324,32 +1161,33 @@ private struct ProviderAndAccountSettingsPage: View {
     var body: some View {
         SettingsPage(title: page.rawValue, subtitle: page.subtitle) {
             if page == .providers {
-            SettingsSection(title: "Visible providers") {
+            SettingsSection(title: "Providers") {
                 ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
                     if index > 0 { SettingsRowDivider() }
-                    HStack(spacing: 10) {
+                    HStack(alignment: .top, spacing: 10) {
                         Image(systemName: provider.systemImage)
                             .font(.system(size: 16))
                             .foregroundStyle(UsageTheme.provider(provider))
                             .frame(width: 22)
                             .accessibilityHidden(true)
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: 3) {
                             Text(provider.displayName)
                                 .font(.system(size: 13, weight: .medium))
                                 .foregroundStyle(UsageTheme.primaryText)
+                            ConnectionStatusView(
+                                status: store.status(for: provider),
+                                isRefreshing: store.refreshing.contains(provider)
+                            )
                             Text(providerSource(provider))
                                 .font(.system(size: 11))
                                 .foregroundStyle(UsageTheme.secondaryText)
                                 .lineLimit(1)
+                            Text(providerHelp(provider))
+                                .font(.system(size: 11))
+                                .foregroundStyle(UsageTheme.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 6)
-                        if ProviderConfigFile.url(for: provider) != nil {
-                            ProviderConfigButton(provider: provider)
-                        }
-                        ConnectionStatusView(
-                            status: store.status(for: provider),
-                            isRefreshing: store.refreshing.contains(provider)
-                        )
                         Toggle(provider.displayName, isOn: Binding(
                             get: { store.visibleProviders.contains(provider) },
                             set: { enabled in
@@ -1365,15 +1203,19 @@ private struct ProviderAndAccountSettingsPage: View {
                         .labelsHidden()
                         .toggleStyle(.switch)
                         .accessibilityLabel(provider.displayName)
+                        VStack(alignment: .trailing, spacing: 5) {
+                            Button("Refresh") { Task { await store.refresh(provider: provider) } }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                                .disabled(store.refreshing.contains(provider))
+                                .help("Refresh \(provider.displayName) now")
+                            if ProviderConfigFile.url(for: provider) != nil {
+                                ProviderConfigButton(provider: provider)
+                            }
+                        }
                     }
                     .padding(.vertical, 7)
                     .frame(minHeight: 44)
-                }
-            }
-            SettingsSection(title: "Providers") {
-                ForEach(Array(Provider.supported.enumerated()), id: \.element.id) { index, provider in
-                    if index > 0 { SettingsRowDivider() }
-                    providerRow(provider)
                 }
             }
             SettingsSection(title: "Cursor session") {
@@ -1385,7 +1227,7 @@ private struct ProviderAndAccountSettingsPage: View {
             }
             } else {
             SettingsSection(title: "Claude Code accounts") {
-                managedAccountsContent(provider: .claude)
+                managedAccountsContent
             }
             SettingsSection(title: "Codex accounts") {
                 codexAccountsContent
@@ -1425,97 +1267,6 @@ private struct ProviderAndAccountSettingsPage: View {
         }
     }
 
-    private func expansionBinding(for provider: Provider) -> Binding<Bool> {
-        Binding(
-            get: { expandedProviders.contains(provider.rawValue) },
-            set: {
-                if $0 { expandedProviders.insert(provider.rawValue) }
-                else { expandedProviders.remove(provider.rawValue) }
-            }
-        )
-    }
-
-    @ViewBuilder
-    private func providerRow(_ provider: Provider) -> some View {
-        DisclosureGroup(isExpanded: expansionBinding(for: provider)) {
-            VStack(alignment: .leading, spacing: 0) {
-                SettingsDetailRow(label: "Status", value: store.status(for: provider).title)
-                ForEach(store.publicServiceIncidents[provider] ?? []) { incident in
-                    SettingsRowDivider()
-                    ServiceIncidentNotice(incident: incident)
-                        .padding(.vertical, 7)
-                }
-                if let snapshot = store.snapshots[provider] {
-                    if let account = snapshot.account {
-                        SettingsRowDivider()
-                        SettingsDetailRow(label: "Account", value: account)
-                    }
-                    if snapshot.lastSuccess != .distantPast {
-                        SettingsRowDivider()
-                        SettingsDetailRow(
-                            label: "Last successful update",
-                            value: snapshot.lastSuccess.formatted(date: .abbreviated, time: .shortened)
-                        )
-                    }
-                    if let error = snapshot.error {
-                        Text("Local usage fetch failed · \(error)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(UsageTheme.warning)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.vertical, 6)
-                    }
-                }
-                SettingsRowDivider()
-                SettingsDetailRow(label: "Source", value: providerSource(provider))
-                Text(providerHelp(provider))
-                    .font(.system(size: 11))
-                    .foregroundStyle(UsageTheme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.vertical, 6)
-                HStack {
-                    Spacer()
-                    Button("Refresh") { Task { await store.refresh(provider: provider) } }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(store.refreshing.contains(provider))
-                        .help("Refresh \(provider.displayName) now")
-                }
-                .padding(.bottom, 4)
-            }
-            .padding(.leading, 32)
-        } label: {
-            HStack(spacing: 10) {
-                Image(systemName: provider.systemImage)
-                    .font(.system(size: 16))
-                    .foregroundStyle(UsageTheme.provider(provider))
-                    .frame(width: 22)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(provider.displayName)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(UsageTheme.primaryText)
-                    if let account = store.snapshots[provider]?.account {
-                        Text(account)
-                            .font(.system(size: 11))
-                            .foregroundStyle(UsageTheme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                }
-                Spacer(minLength: 8)
-                ConnectionStatusView(
-                    status: store.status(for: provider),
-                    isRefreshing: store.refreshing.contains(provider)
-                )
-            }
-            .padding(.vertical, 7)
-            .frame(minHeight: 44)
-            .contentShape(Rectangle())
-            .accessibilityLabel("\(provider.displayName), \(store.status(for: provider).title)")
-        }
-    }
-
     @ViewBuilder
     private var codexAccountsContent: some View {
         Text("Add accounts in a separate sign-in window. Adding an account keeps the current Codex login active.")
@@ -1545,24 +1296,22 @@ private struct ProviderAndAccountSettingsPage: View {
     }
 
     @ViewBuilder
-    private func managedAccountsContent(provider: Provider) -> some View {
+    private var managedAccountsContent: some View {
         Text("Save the current account or sign in to another account without changing the active login.")
             .font(.system(size: 11)).foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true).padding(.vertical, 4)
-        let accounts = provider == .claude ? store.claudeCodeAccounts : store.codexAccounts
-        let activeID = provider == .claude ? store.claudeCodeInUseAccountID : store.codexInUseAccountID
-        ForEach(accounts) { account in
+        ForEach(store.claudeCodeAccounts) { account in
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.label).font(.system(size: 12, weight: .medium))
-                    Text(account.id == activeID ? "In use" : "Saved")
+                    Text(account.id == store.claudeCodeInUseAccountID ? "In use" : "Saved")
                         .font(.system(size: 10)).foregroundStyle(UsageTheme.secondaryText)
                 }
                 Spacer()
-                if account.id != activeID {
-                    Button("Activate") { Task { await store.activateManagedAccount(for: provider, id: account.id) } }
+                if account.id != store.claudeCodeInUseAccountID {
+                    Button("Activate") { Task { await store.activateManagedAccount(for: .claude, id: account.id) } }
                         .buttonStyle(.bordered).controlSize(.small)
-                        .disabled(store.refreshing.contains(provider) || store.refreshingManagedAccounts.contains(account.id))
+                        .disabled(store.refreshing.contains(.claude) || store.refreshingManagedAccounts.contains(account.id))
                 }
             }
             .padding(.vertical, 4)
@@ -1572,14 +1321,14 @@ private struct ProviderAndAccountSettingsPage: View {
             Button("Add account…") { openWindow(id: "add-account") }
                 .buttonStyle(.bordered).controlSize(.small)
         }
-        if let error = store.managedAccountErrors[provider]? ["index"] {
+        if let error = store.managedAccountErrors[.claude]?["index"] {
             SettingsErrorText(text: error).padding(.vertical, 4)
         }
     }
 
     @ViewBuilder
     private var antigravityAccountsContent: some View {
-        Text("Save each Antigravity sign-in here, then switch accounts from the provider card. To add another account, sign in with Antigravity CLI or app first and save it here. Saved credentials stay in Keychain; switching here does not change the CLI or app sign-in.")
+        Text("Save each Antigravity sign-in here, then switch accounts from the menu bar popover. To add another account, sign in with Antigravity CLI or app first and save it here. Saved credentials stay in Keychain; switching here does not change the CLI or app sign-in.")
             .font(.system(size: 11))
             .foregroundStyle(UsageTheme.secondaryText)
             .fixedSize(horizontal: false, vertical: true)
@@ -1723,8 +1472,6 @@ private struct ProviderAndAccountSettingsPage: View {
                 .font(.system(size: 11))
                 .foregroundStyle(UsageTheme.secondaryText)
             Spacer()
-            Link("CodexBar Cursor source", destination: URL(string: "https://github.com/steipete/CodexBar/blob/main/docs/cursor.md")!)
-                .font(.system(size: 11))
             Button("Save cookie & refresh") { saveCursorCredentials() }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
@@ -1923,8 +1670,8 @@ func providerSource(_ provider: Provider) -> String {
     case .gemini: "Gemini CLI OAuth · Code Assist quota API"
     case .antigravity: "Antigravity OAuth · Google Cloud Code quota API"
     case .grok: "Grok CLI local billing log"
+    case .commandCode: "Command Code API · ~/.commandcode/auth.json"
     case .openCode: "OpenCode dashboard session · web API"
-    default: "Not integrated"
     }
 }
 
@@ -1937,8 +1684,8 @@ func providerHelp(_ provider: Provider) -> String {
     case .gemini: "Sign in with Google through Gemini CLI. Usage is read from its OAuth session; API key and Vertex AI auth are unsupported."
     case .antigravity: "Sign in to Antigravity CLI first. Its existing Keychain credential or legacy token file is read without changing it."
     case .grok: "Use Grok CLI. Weekly credits are read from ~/.grok/logs/unified.jsonl; no network request is made."
+    case .commandCode: "Sign in with `cmd login`. The API key is read-only from ~/.commandcode/auth.json and never shown here."
     case .openCode: "Add an OpenCode dashboard cookie in Settings. The session is stored in Keychain."
-    default: "Usage tracking is not integrated for this provider."
     }
 }
 
@@ -1972,7 +1719,7 @@ struct AboutSettingsView: View {
             }
             .accessibilityElement(children: .combine)
             SettingsSection(title: "Overview") {
-                Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, Antigravity, Grok CLI, and OpenCode usage. Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, Gemini CLI, and Antigravity usage use their session-authenticated APIs; Grok CLI usage comes from its local log. Provider interfaces can change.")
+                Text("A native menu bar utility for Claude Code, Codex, Cursor, GitHub Copilot, Gemini CLI, Antigravity, Grok CLI, OpenCode, and Command Code usage.Claude usage uses the Claude Code OAuth usage endpoint. Codex usage comes from the local `codex app-server`. Cursor, GitHub Copilot, Gemini CLI, and Antigravity usage use their session-authenticated APIs; Grok CLI usage comes from its local log. Provider interfaces can change.")
                     .font(.system(size: 12))
                     .foregroundStyle(UsageTheme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)

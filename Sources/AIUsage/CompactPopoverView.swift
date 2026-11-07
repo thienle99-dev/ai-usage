@@ -91,7 +91,7 @@ struct CompactPopoverView: View {
             )
         }
         .padding(.horizontal, 15)
-        .frame(width: 280, alignment: .topLeading)
+        .frame(width: 300, alignment: .topLeading)
         // A light tint over the system backdrop keeps the native window's
         // blur and shape while lifting its Light Mode tone slightly.
         .background {
@@ -100,7 +100,11 @@ struct CompactPopoverView: View {
             }
         }
         .background {
-            PopoverWindowAppearanceBridge(appearanceName: windowAppearanceName)
+            PopoverWindowAppearanceBridge(
+                appearanceName: windowAppearanceName,
+                reduceTransparency: reduceTransparency,
+                increasedContrast: colorSchemeContrast == .increased
+            )
                 .frame(width: 1, height: 1)
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -283,20 +287,30 @@ private struct CompactPopoverHeader<MoreContent: View>: View {
 @MainActor
 private struct PopoverWindowAppearanceBridge: NSViewRepresentable {
     let appearanceName: NSAppearance.Name?
+    let reduceTransparency: Bool
+    let increasedContrast: Bool
 
     func makeNSView(context: Context) -> PopoverAppearanceView {
         let view = PopoverAppearanceView()
         view.appearanceName = appearanceName
+        view.reduceTransparency = reduceTransparency
+        view.increasedContrast = increasedContrast
         return view
     }
 
     func updateNSView(_ view: PopoverAppearanceView, context: Context) {
         view.appearanceName = appearanceName
+        view.reduceTransparency = reduceTransparency
+        view.increasedContrast = increasedContrast
     }
 }
 
 @MainActor
 private final class PopoverAppearanceView: NSView {
+    var reduceTransparency = false { didSet { applyAppearance() } }
+    var increasedContrast = false { didSet { applyAppearance() } }
+    private weak var glassView: NSView?
+
     var appearanceName: NSAppearance.Name? {
         didSet { applyAppearance() }
     }
@@ -312,6 +326,36 @@ private final class PopoverAppearanceView: NSView {
         if window.appearance?.name != appearanceName {
             window.appearance = appearance
         }
+        updateGlassBackground(in: window)
+    }
+
+    private func updateGlassBackground(in window: NSWindow) {
+        guard #available(macOS 26, *) else { return }
+        guard !reduceTransparency, !increasedContrast,
+              let frameView = window.contentView?.superview else {
+            glassView?.removeFromSuperview()
+            glassView = nil
+            window.isOpaque = true
+            window.backgroundColor = .windowBackgroundColor
+            return
+        }
+
+        // The native panel fill would otherwise sit on top of the glass and flatten it.
+        window.isOpaque = false
+        window.backgroundColor = .clear
+
+        let glassView: NSGlassEffectView
+        if let existingView = self.glassView as? NSGlassEffectView {
+            glassView = existingView
+        } else {
+            glassView = NSGlassEffectView()
+            glassView.style = .regular
+            glassView.cornerRadius = 18
+            glassView.autoresizingMask = [.width, .height]
+            frameView.addSubview(glassView, positioned: .below, relativeTo: window.contentView)
+            self.glassView = glassView
+        }
+        glassView.frame = frameView.bounds
     }
 }
 
@@ -320,10 +364,8 @@ private struct CompactHeaderHoverStyle: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(
-                isHovered ? Color.primary.opacity(0.06) : .clear,
-                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
-            )
+            .popoverGlass(in: Circle(), interactive: true, isActive: isHovered)
+            .animation(.easeOut(duration: 0.15), value: isHovered)
             .onHover { isHovered = $0 }
     }
 }
@@ -413,20 +455,26 @@ private struct CompactProviderSection: View {
             let activeID = store.activeAntigravityAccountID
             var rows = store.antigravityAccounts.map { account in
                 let selected = account.id == activeID
+                let email = AntigravityCredentials.emailOnlyIdentity(account.identity)
+                let selectedEmail = AntigravityCredentials.emailOnlyIdentity(snapshot?.account) ?? email
                 return makeRow(
                     id: account.id,
-                    name: selected ? (snapshot?.account ?? account.displayName) : account.displayName,
+                    name: selected ? (selectedEmail ?? AppLocalization.string("Antigravity account", locale: locale))
+                        : (email ?? AppLocalization.string("Antigravity account", locale: locale)),
                     selected: selected,
                     selectedAction: { Task { await store.refresh(provider: .antigravity) } },
-                    inactiveAction: { Task { await store.switchAntigravityAccount(to: account.id) } }
+                    inactiveAction: { Task { await store.switchAntigravityAccount(to: account.id) } },
+                    plan: selected ? snapshot?.plan : nil
                 )
             }
             if !rows.contains(where: \.selected) {
                 rows.insert(makeRow(
                     id: "antigravity-live",
-                    name: snapshot?.account ?? AppLocalization.string("Antigravity CLI/App sign-in", locale: locale),
+                    name: AntigravityCredentials.emailOnlyIdentity(snapshot?.account)
+                        ?? AppLocalization.string("Antigravity CLI/App sign-in", locale: locale),
                     selected: true,
-                    selectedAction: { Task { await store.refresh(provider: .antigravity) } }
+                    selectedAction: { Task { await store.refresh(provider: .antigravity) } },
+                    plan: snapshot?.plan
                 ), at: 0)
             }
             return rows.isEmpty ? [defaultRow] : rows
@@ -496,13 +544,14 @@ private struct CompactProviderSection: View {
         selectedAction: @escaping () -> Void,
         inactiveAction: (() -> Void)? = nil,
         windows: [UsageWindow] = [],
-        status: ProviderStatus? = nil
+        status: ProviderStatus? = nil,
+        plan: String? = nil
     ) -> CompactAccountRowModel {
         let account = accountParts(name)
         return CompactAccountRowModel(
             id: id,
             name: account.name,
-            plan: account.plan,
+            plan: plan ?? account.plan,
             selected: selected,
             action: selected ? selectedAction : (inactiveAction ?? selectedAction),
             windows: windows,
@@ -513,7 +562,9 @@ private struct CompactProviderSection: View {
     private func accountParts(_ value: String) -> (name: String, plan: String?) {
         let parts = value.components(separatedBy: " · ")
         guard parts.count > 1 else { return (value, nil) }
-        return (parts[0], parts.dropFirst().joined(separator: " · "))
+        let rawPlan = parts.dropFirst().joined(separator: " · ")
+        let plan = provider == .claude ? UsageParsing.friendlyPlan(rawPlan) : rawPlan
+        return (parts[0], plan)
     }
 
 }
@@ -566,7 +617,7 @@ private struct CompactAccountRow: View {
                         .opacity(row.selected ? 1 : 0)
                         .accessibilityHidden(true)
                     Text(row.name)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(row.selected
                             ? PopoverColorTokens.primaryText(colorScheme: colorScheme, increasedContrast: increasedContrast)
                             : PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
@@ -579,7 +630,7 @@ private struct CompactAccountRow: View {
                             .font(.system(size: 11, weight: .regular))
                             .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
                             .lineLimit(1)
-                            .truncationMode(.middle)
+                            .truncationMode(.tail)
                             .frame(maxWidth: 105, alignment: .trailing)
                             .help(plan)
                     }
@@ -595,6 +646,17 @@ private struct CompactAccountRow: View {
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                if let commandCodeDetail {
+                    HStack(spacing: 6) {
+                        Color.clear.frame(width: 12)
+                        Text(commandCodeDetail)
+                            .font(.system(size: 10, weight: .regular).monospacedDigit())
+                            .foregroundStyle(PopoverColorTokens.secondaryText(colorScheme: colorScheme, increasedContrast: increasedContrast))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 if showResetTimes, let resetSummary {
                     HStack(spacing: 6) {
                         Color.clear.frame(width: 12)
@@ -609,10 +671,15 @@ private struct CompactAccountRow: View {
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 6)
-            .background(isHovered ? PopoverColorTokens.rowHoverTint(provider, colorScheme: colorScheme) : .clear, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .popoverGlass(
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous),
+                tint: PopoverColorTokens.rowHoverTint(provider, colorScheme: colorScheme).opacity(0.35),
+                isActive: isHovered
+            )
+            .animation(.easeOut(duration: 0.15), value: isHovered)
             .overlay {
                 if isHovered && increasedContrast {
-                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(PopoverColorTokens.separator, lineWidth: 1)
                 }
             }
@@ -629,11 +696,36 @@ private struct CompactAccountRow: View {
     private var usageSummary: String {
         if status == .authenticationRequired { return AppLocalization.string("Sign-in expired", locale: locale) }
 
+        if provider == .cursor {
+            let cursorParts = windows.compactMap { window -> String? in
+                guard let value = window.validUtilization else { return nil }
+                let sourceLabel = window.label.lowercased()
+                let label: String
+                if sourceLabel.contains("plan") { label = "Plan" }
+                else if sourceLabel.contains("auto") || sourceLabel.contains("composer") { label = "Auto" }
+                else if sourceLabel.contains("api") { label = "API" }
+                else { label = window.label }
+                let percentage = value.formatted(.number.precision(.fractionLength(0)).locale(locale))
+                return "\(label) \(percentage)%"
+            }
+            if !cursorParts.isEmpty { return cursorParts.joined(separator: " · ") }
+        }
+
         if let fiveHour, fiveHour.validUtilization == 100 {
             return limitReachedSummary(label: "5h", window: fiveHour)
         }
         if let weekly, weekly.validUtilization == 100 {
             return limitReachedSummary(label: "Week", window: weekly)
+        }
+
+        if provider == .commandCode {
+            let commandCodeParts = windows.compactMap { window -> String? in
+                guard let value = window.validUtilization else { return nil }
+                let label = window.id == fiveHour?.id ? "5h" : window.id == weekly?.id ? "Week" : window.label
+                let percentage = value.formatted(.number.precision(.fractionLength(0)).locale(locale))
+                return "\(label) \(percentage)%"
+            }
+            if !commandCodeParts.isEmpty { return commandCodeParts.joined(separator: " · ") }
         }
 
         let parts = [
@@ -643,6 +735,21 @@ private struct CompactAccountRow: View {
         if !parts.isEmpty { return parts.joined(separator: " · ") }
         if status == .rateLimited { return AppLocalization.string("Rate limited · Reset unavailable", locale: locale) }
         return AppLocalization.string("Usage unavailable", locale: locale)
+    }
+
+    /// Command Code's monthly pool: request count and days until the plan renews.
+    private var commandCodeDetail: String? {
+        guard provider == .commandCode, status != .authenticationRequired,
+              let credits = windows.first(where: { $0.label == "Credits" }) else { return nil }
+        var parts: [String] = []
+        if let detail = credits.detail, !detail.isEmpty { parts.append(detail) }
+        if let renewal = credits.resetsAt {
+            let days = max(0, Int(ceil(renewal.timeIntervalSinceNow / 86_400)))
+            parts.append(days == 1
+                ? AppLocalization.string("1 day to renew", locale: locale)
+                : String(format: AppLocalization.string("%d days to renew", locale: locale), locale: locale, arguments: [days]))
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var resetSummary: String? {
