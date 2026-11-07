@@ -252,25 +252,21 @@ enum CopilotCredentialVault {
     private static let account = "oauth-access-token"
     static var hasToken: Bool { read() != nil }
     static func save(token: String) throws {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
-        let value: [String: Any] = [kSecValueData as String: Data(token.utf8)]
-        let status = SecItemUpdate(query as CFDictionary, value as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query; insert[kSecValueData as String] = Data(token.utf8)
-            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else { throw ProviderFailure.credentials("Could not save the GitHub token in Keychain.") }
-        } else if status != errSecSuccess { throw ProviderFailure.credentials("Could not update the GitHub token in Keychain.") }
+        do { try AIUsageCredentialVault.set(Data(token.utf8), for: "copilot/oauth-token") }
+        catch { throw ProviderFailure.credentials("Could not save the GitHub token in Keychain.") }
     }
     static func delete() {
-        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
+        try? AIUsageCredentialVault.remove("copilot/oauth-token")
+        try? AIUsageCredentialVault.deleteLegacyData(service: service, account: account)
     }
     static func accessToken() throws -> String {
         guard let token = read() else { throw ProviderFailure.credentials("Connect GitHub Copilot in Settings to refresh usage.") }
         return token
     }
     private static func read() -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
+        guard let data = try? AIUsageCredentialVault.data(for: "copilot/oauth-token", migrating: {
+            try AIUsageCredentialVault.legacyData(service: service, account: account)
+        }) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }
@@ -541,27 +537,13 @@ enum OpenCodeCredentialVault {
         guard !normalized.isEmpty else {
             throw ProviderFailure.credentials("Enter an OpenCode cookie header containing auth or __Host-console_session.")
         }
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account]
-        let update: [String: Any] = [kSecValueData as String: Data(normalized.utf8)]
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = Data(normalized.utf8)
-            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else {
-                throw ProviderFailure.credentials("Could not save the OpenCode cookie in Keychain.")
-            }
-        } else if status != errSecSuccess {
-            throw ProviderFailure.credentials("Could not update the OpenCode cookie in Keychain.")
-        }
+        do { try AIUsageCredentialVault.set(Data(normalized.utf8), for: "opencode/cookie-header") }
+        catch { throw ProviderFailure.credentials("Could not save the OpenCode cookie in Keychain.") }
     }
 
     static func delete() {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account]
-        SecItemDelete(query as CFDictionary)
+        try? AIUsageCredentialVault.remove("opencode/cookie-header")
+        try? AIUsageCredentialVault.deleteLegacyData(service: service, account: account)
     }
 
     static func cookieHeader() throws -> String {
@@ -572,14 +554,9 @@ enum OpenCodeCredentialVault {
     }
 
     private static func read() -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account,
-                                    kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        guard let data = try? AIUsageCredentialVault.data(for: "opencode/cookie-header", migrating: {
+            try AIUsageCredentialVault.legacyData(service: service, account: account)
+        }) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }
@@ -647,55 +624,34 @@ enum CursorCredentialVault {
     private static let service = "com.aiusagemonitor.cursor-session"
     private static let keyAccount = "manual-cookie-header"
 
-    static var hasStoredCookie: Bool {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: keyAccount,
-                                    kSecReturnData as String: false,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        return SecItemCopyMatching(query as CFDictionary, nil) == errSecSuccess
-    }
+    static var hasStoredCookie: Bool { storedCookie() != nil }
 
     static func save(cookieHeader: String) throws {
         let value = cookieHeader.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.contains("=") else { throw ProviderFailure.credentials("Enter a valid Cursor session cookie header.") }
         let data = Data(value.utf8)
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: keyAccount]
-        let update: [String: Any] = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        if status == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = data
-            let addStatus = SecItemAdd(insert as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw ProviderFailure.credentials("Could not save the Cursor cookie in Keychain.") }
-        } else if status != errSecSuccess {
-            throw ProviderFailure.credentials("Could not update the Cursor cookie in Keychain.")
-        }
+        do { try AIUsageCredentialVault.set(data, for: "cursor/cookie-header") }
+        catch { throw ProviderFailure.credentials("Could not save the Cursor cookie in Keychain.") }
     }
 
     static func delete() {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: keyAccount]
-        SecItemDelete(query as CFDictionary)
+        try? AIUsageCredentialVault.remove("cursor/cookie-header")
+        try? AIUsageCredentialVault.deleteLegacyData(service: service, account: keyAccount)
     }
 
     static func session() throws -> CursorSession {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
-                                    kSecAttrService as String: service,
-                                    kSecAttrAccount as String: keyAccount,
-                                    kSecReturnData as String: true,
-                                    kSecMatchLimit as String: kSecMatchLimitOne]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecSuccess, let data = result as? Data,
-           let cookie = String(data: data, encoding: .utf8), !cookie.isEmpty {
+        if let cookie = storedCookie(), !cookie.isEmpty {
             return CursorSession(cookieHeader: cookie, accountHint: nil)
         }
         if let session = try CursorAppAuthStore().session() { return session }
         throw ProviderFailure.credentials("Sign in to Cursor.app or add a session cookie in Settings → Providers.")
+    }
+
+    private static func storedCookie() -> String? {
+        guard let data = try? AIUsageCredentialVault.data(for: "cursor/cookie-header", migrating: {
+            try AIUsageCredentialVault.legacyData(service: service, account: keyAccount)
+        }) else { return nil }
+        return String(data: data, encoding: .utf8)
     }
 }
 

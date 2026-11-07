@@ -151,6 +151,16 @@ enum AntigravityAccountVault {
     }
 
     private static func credentialDataForMigration(id: String) throws -> Data? {
+        do {
+            return try AIUsageCredentialVault.data(for: credentialKey(id)) {
+                try legacyCredentialData(id: id)
+            }
+        } catch let CredentialVaultError.keychain(status) {
+            throw AntigravityAccountVaultError.keychain(status)
+        }
+    }
+
+    private static func legacyCredentialData(id: String) throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -167,22 +177,9 @@ enum AntigravityAccountVault {
     }
 
     static func saveCredentialData(_ data: Data, id: String) throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: id
-        ]
-        let update: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = query
-            update.forEach { add[$0.key] = $0.value }
-            let addStatus = SecItemAdd(add as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw AntigravityAccountVaultError.keychain(addStatus) }
-        } else if status != errSecSuccess {
+        do {
+            try AIUsageCredentialVault.set(data, for: credentialKey(id))
+        } catch let CredentialVaultError.keychain(status) {
             throw AntigravityAccountVaultError.keychain(status)
         }
     }
@@ -193,11 +190,18 @@ enum AntigravityAccountVault {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: id
         ]
+        do {
+            try AIUsageCredentialVault.remove(credentialKey(id))
+        } catch let CredentialVaultError.keychain(status) {
+            throw AntigravityAccountVaultError.keychain(status)
+        }
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw AntigravityAccountVaultError.keychain(status)
         }
     }
+
+    private static func credentialKey(_ id: String) -> String { "antigravity/account/\(id)" }
 }
 
 func migrateAntigravityAccounts(_ accounts: [AntigravityAccount], availableCredentialIDs: Set<String>, activeID: String?) -> ([ManagedAccountRecord], String?) {

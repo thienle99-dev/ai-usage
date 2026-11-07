@@ -126,12 +126,28 @@ enum ClaudeCodeCredentialVault {
     }
 
     static func saveManaged(_ data: Data, accountID: String) throws {
-        try save(data, service: managedService, account: accountID)
+        do {
+            try AIUsageCredentialVault.set(data, for: managedCredentialKey(accountID))
+        } catch let CredentialVaultError.keychain(status) {
+            throw ClaudeCodeSessionError.keychain(status)
+        }
     }
 
     static func managedCredential(accountID: String) throws -> Data {
-        try read(service: managedService, account: accountID)
+        do {
+            guard let data = try AIUsageCredentialVault.data(for: managedCredentialKey(accountID), migrating: {
+                try readIfExists(service: managedService, account: accountID)
+            }) else {
+                throw ClaudeCodeSessionError.keychain(errSecItemNotFound)
+            }
+            return data
+        } catch let error as CredentialVaultError {
+            if case .keychain(let status) = error { throw ClaudeCodeSessionError.keychain(status) }
+            throw error
+        }
     }
+
+    private static func managedCredentialKey(_ accountID: String) -> String { "claude/managed/\(accountID)" }
 
     static func accessToken(from data: Data) throws -> String {
         let (root, _) = sessionParts(data)
@@ -292,6 +308,17 @@ enum ClaudeCodeCredentialVault {
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { throw ClaudeCodeSessionError.keychain(status) }
+        return data
+    }
+
+    private static func readIfExists(service: String, account: String) throws -> Data? {
+        var query = baseQuery(service: service, account: account)
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data else { throw ClaudeCodeSessionError.keychain(status) }
         return data
     }
