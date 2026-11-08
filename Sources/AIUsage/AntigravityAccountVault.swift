@@ -82,14 +82,14 @@ enum AntigravityAccountVault {
 
     private static func preferredLiveData(defaults: UserDefaults, cliData: Data?) -> Data? {
         if let id = activeAccountID(defaults: defaults), let data = credentialData(id: id) { return data }
-        return AntigravityCredentials.preferredData(keychainData: AntigravityCredentials.keychainData(), cliData: cliData)
+        return AntigravityCredentials.liveData(cliData: cliData) { AntigravityCredentials.keychainData() }
     }
 
     private static func liveCredentialData(defaults: UserDefaults) -> Data? {
         guard let id = activeCredentialReference(defaults: defaults) else {
             let home = FileManager.default.homeDirectoryForCurrentUser
             let cliData = try? Data(contentsOf: home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
-            return AntigravityCredentials.preferredData(keychainData: AntigravityCredentials.keychainData(), cliData: cliData)
+            return AntigravityCredentials.liveData(cliData: cliData) { AntigravityCredentials.keychainData() }
         }
         return credentialData(id: id)
     }

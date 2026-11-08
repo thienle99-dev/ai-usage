@@ -39,7 +39,7 @@ struct AntigravityProvider: UsageProvider {
             }
         } else {
             let cliData = try? Data(contentsOf: homeDirectory.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
-            selectedData = AntigravityCredentials.preferredData(keychainData: credentialReader(), cliData: cliData)
+            selectedData = AntigravityCredentials.liveData(cliData: cliData, keychainData: credentialReader)
         }
         guard var credential = AntigravityCredentials.decode(selectedData) else {
             throw ProviderFailure.credentials(String(localized: "Sign in to Antigravity first. Its OAuth credential was not found."))
@@ -168,6 +168,15 @@ struct AntigravityCredentials {
             if lhsFresh != rhsFresh { return !lhsFresh && rhsFresh }
             return (lhs.1.expiry ?? .distantPast) < (rhs.1.expiry ?? .distantPast)
         }?.0
+    }
+
+    /// The CLI token file is the normal source for a live Antigravity session.
+    /// Read Keychain only when that file is absent or invalid; querying the
+    /// `gemini` item on every usage refresh can repeatedly trigger macOS access
+    /// prompts when its ACL trusts only Antigravity.app.
+    static func liveData(cliData: Data?, keychainData: () -> Data?) -> Data? {
+        if let cliData, decode(cliData) != nil { return cliData }
+        return keychainData()
     }
 
     static func emailOnlyIdentity(_ identity: String?) -> String? {
@@ -357,7 +366,7 @@ extension AntigravityCredentials {
     static func currentLiveSessionKey() -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let cliData = try? Data(contentsOf: home.appendingPathComponent(".gemini/antigravity-cli/antigravity-oauth-token"))
-        guard let credentials = decode(preferredData(keychainData: keychainData(), cliData: cliData)) else { return nil }
+        guard let credentials = decode(liveData(cliData: cliData) { keychainData() }) else { return nil }
         return credentials.identityLabel?.lowercased() ?? credentials.refreshToken
     }
 
